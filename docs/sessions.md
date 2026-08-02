@@ -103,8 +103,8 @@ Also delete any raw HAR used for import when it is no longer needed.
 
 ## Direct HAR mode
 
-You can skip session import and pass `--har` directly to `create`, including an
-explicit creation-time submission. Direct HAR mode does not checkpoint updated
-sequence state, so it must be treated as one-shot after any network request
-begins. Named sessions are safer for submission because uncertain outcomes are
-persisted as non-reusable state.
+You can skip session import and pass `--har` directly to `create`, which submits
+by default unless `--draft` is supplied. Direct HAR mode does not checkpoint
+updated sequence state, so it must be treated as one-shot after any network
+request begins. Named sessions are safer for submission because uncertain
+outcomes are persisted as non-reusable state.

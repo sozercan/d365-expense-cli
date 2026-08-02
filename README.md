@@ -1,13 +1,12 @@
 # d365-expense
 
-Create Dynamics 365 Finance expense reports from the command line, attach one
-or more receipts, and explicitly choose whether to save a Draft or submit the
-new report.
+Create and submit Dynamics 365 Finance expense reports from the command line,
+with optional receipts and an explicit `--draft` opt-out.
 
 > [!IMPORTANT]
-> **Submission is explicit and real.** `create --submit` submits the newly
-> created report after every receipt succeeds. An executing submit requires the
-> additional `--confirm-submit` flag.
+> **Submission is the default.** `create` submits the newly created report after
+> every receipt succeeds. Add `--draft` only when you want to save without
+> submitting.
 >
 > Always preview with `--dry-run`. The CLI still cannot approve, post, recall,
 > or run arbitrary workflow actions, and it cannot submit an already-closed
@@ -27,8 +26,7 @@ new report.
 You need:
 
 1. Access to the Dynamics 365 Finance **Expense management** workspace.
-2. Permission to create expense-report Drafts and, when using `--submit`, to
-   submit them.
+2. Permission to create and submit expense reports.
 3. A current authenticated session, acquired from either:
    - a private browser HAR; or
    - a dedicated local Microsoft Edge session through CDP.
@@ -67,7 +65,7 @@ If you are working from a source checkout, see
 1. Acquire current Dynamics authentication from a HAR or local Edge session.
 2. Store it under a short session name such as `work`.
 3. Preview the expense with `--dry-run`.
-4. Create one report, attach the receipts, and choose `--draft` or `--submit`.
+4. Create and submit one report, or add `--draft` to save without submitting.
 
 ## Quick start
 
@@ -113,7 +111,6 @@ Always start with a dry run:
 
 ```bash
 d365-expense create \
-  --draft \
   --session work \
   --purpose "Conference travel" \
   --receipt outbound.png \
@@ -125,13 +122,12 @@ d365-expense create \
 The preview validates the session and every local receipt without creating an
 expense report.
 
-### 3. Create the Draft
+### 3. Create and submit the report
 
 Review the preview, then run the same command without `--dry-run`:
 
 ```bash
 d365-expense create \
-  --draft \
   --session work \
   --purpose "Conference travel" \
   --receipt outbound.png \
@@ -139,27 +135,22 @@ d365-expense create \
   --receipt-note "Ground transportation"
 ```
 
-This creates one Draft, attaches both receipts, and selects **Save and close**.
-It does not submit the report.
+This creates one report, attaches both receipts, and submits it.
 
 ### 4. Confirm the result
 
 A successful result looks like:
 
 ```text
-created draft <report-id>: purpose="Conference travel" status=Draft
-receipts=2 ... saved-and-closed=true
+created and submitted report <report-id>: purpose="Conference travel"
+status=<non-draft-status> receipts=2 ... submitted=true
 ```
 
 Confirm these fields:
 
-- `status=Draft`
+- a non-Draft status
 - the expected receipt count
-- `saved-and-closed=true`
-
-To submit instead, preview and execute a **new** report with the submission
-recipe below. Submission is a creation-time outcome; this CLI does not reopen
-and submit the Draft created in this quick start.
+- `submitted=true`
 
 ## Common recipes
 
@@ -172,7 +163,7 @@ d365-expense create \
   --purpose "Team offsite"
 ```
 
-### Attach several receipts
+### Save a Draft with several receipts
 
 Repeat `--receipt`; order is preserved:
 
@@ -190,12 +181,11 @@ d365-expense create \
 
 ### Create and submit a report
 
-Preview first. A submit dry run sends no network requests and does not need the
-confirmation flag:
+Preview first. Submission is already the default, and a dry run sends no
+network requests:
 
 ```bash
 d365-expense create \
-  --submit \
   --session work \
   --purpose "Customer visit" \
   --receipt flight.png \
@@ -203,12 +193,10 @@ d365-expense create \
   --dry-run
 ```
 
-After reviewing the plan, execute with the additional confirmation:
+After reviewing the plan, execute the same command without `--dry-run`:
 
 ```bash
 d365-expense create \
-  --submit \
-  --confirm-submit \
   --session work \
   --purpose "Customer visit" \
   --receipt flight.png \
@@ -283,10 +271,8 @@ authentication afterward.
 
 ## Troubleshooting
 
-- **`exactly one of --draft or --submit is required`** — choose the intended
-  final action explicitly.
-- **`executing --submit requires --confirm-submit`** — preview without the
-  confirmation, then add it only to the reviewed execution command.
+- **A report was saved as Draft unexpectedly** — remove `--draft`; submission is
+  the default create outcome.
 - **Submit result cannot be verified** — the report may have changed remotely;
   do not retry. Inspect Dynamics and replace an `uncertain` named session.
 - **Session is `expired`** — sign in again and re-import from HAR or CDP.

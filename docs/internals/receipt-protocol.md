@@ -130,8 +130,9 @@ failure the CLI stops, does not attach later files, does not invoke
 
 Receipt attachment itself has no Submit operation. Receipt validation rejects
 submit, workflow, posting, approval, and recall commands at every RCM stage.
-During `create --submit`, the receipt workflow must finish and verify every
-attachment before control returns to the separate, exact submission validator.
+During the default `create` flow, the receipt workflow must finish and verify
+every attachment before control returns to the separate, exact submission
+validator. `--draft` selects `SaveAndClose` instead.
 
 ## Compatibility
 

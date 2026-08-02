@@ -89,7 +89,7 @@ Names resolve under:
 
 ## Profile sources for expense commands
 
-`create --draft` and `create --submit` require exactly one of:
+`create` requires exactly one authentication source:
 
 ```text
 --session <name>
@@ -102,11 +102,8 @@ must be treated as one-shot after a network operation begins.
 
 Canonical mutating commands execute by default. `--dry-run` performs local
 validation and prints the plan without sending requests or changing named
-session state. `create` requires exactly one final-action assertion:
-
-- `--draft` selects `SaveAndClose`;
-- `--submit` selects the exact discovered `SubmitButton`; and
-- an executing submit additionally requires `--confirm-submit`.
+session state. `create` selects the exact discovered `SubmitButton` by default;
+`--draft` selects `SaveAndClose` instead.
 
 ## Session status lifecycle
 
@@ -218,9 +215,9 @@ clicking `SaveAndClose`. For each receipt it:
    receipt-count checks in [receipt-protocol.md](receipt-protocol.md); and
 5. proceeds to the next receipt only after the cumulative count is confirmed.
 
-Only after every receipt succeeds does the CLI click the new report's dynamic
-`SaveAndClose` or validated `SubmitButton`, according to the explicit final
-action. It validates all local files before the first network request and never
+Only after every receipt succeeds does the CLI click the validated
+`SubmitButton`, or the dynamic `SaveAndClose` when `--draft` is present. It
+validates all local files before the first network request and never
 automatically retries or compensates a partially populated Draft.
 
 The preferred path uses the built-in, validated, non-secret upload contract:

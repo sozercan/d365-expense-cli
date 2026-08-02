@@ -39,7 +39,7 @@ func runLegacy(args []string, stdout, stderr io.Writer) int {
 	case "attach-receipt":
 		return runAttachReceipt(args[1:], stdout, stderr)
 	case "submit":
-		fmt.Fprintln(stderr, "submit is a create outcome, not a standalone command; use d365-expense create --submit")
+		fmt.Fprintln(stderr, "submit is the default create outcome; use d365-expense create")
 		return 2
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
@@ -84,8 +84,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	sessionName := flags.String("session", "", "named imported standalone session")
 	purpose := flags.String("purpose", "", "expense report title/purpose")
 	submit := flags.Bool("submit", false, "submit the newly created report instead of saving it as a Draft")
-	confirmSubmit := flags.Bool("confirm-submit", false, "confirm an executing submit operation")
-	execute := flags.Bool("execute", false, "send the three allowlisted draft-creation requests")
+	execute := flags.Bool("execute", false, "send the three allowlisted report-creation requests")
 	timeout := flags.Duration("timeout", 45*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -106,19 +105,6 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "create-draft requires a positive --timeout")
 		return 2
 	}
-	if *confirmSubmit && !*submit {
-		fmt.Fprintln(stderr, "create-draft: --confirm-submit requires --submit")
-		return 2
-	}
-	if *submit && *execute && !*confirmSubmit {
-		fmt.Fprintln(stderr, "create-draft: executing --submit requires --confirm-submit")
-		return 2
-	}
-	if *submit && !*execute && *confirmSubmit {
-		fmt.Fprintln(stderr, "create-draft: --confirm-submit is only valid with --execute")
-		return 2
-	}
-
 	profile, err := loadBootstrapForRead(*harPath, *sessionName)
 	if err != nil {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
@@ -148,7 +134,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "- %s\n", action)
 		}
 		if *submit {
-			fmt.Fprintln(stdout, "rerun with --execute --confirm-submit to create and submit the report")
+			fmt.Fprintln(stdout, "rerun with --execute to create and submit the report")
 		} else {
 			fmt.Fprintln(stdout, "rerun with --execute to create and save the Draft report")
 		}
@@ -308,5 +294,5 @@ func printLegacyUsage(w io.Writer) {
 	fmt.Fprintln(w, "  msexpense attach-receipt --har <receipt.har> --report <number> --file <receipt.png> [--execute]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Create and attach commands are dry runs unless --execute is supplied.")
-	fmt.Fprintln(w, "Imported sessions are browser-free but expire when Dynamics revokes their credentials. Use canonical d365-expense create --submit for explicit submission.")
+	fmt.Fprintln(w, "Imported sessions are browser-free but expire when Dynamics revokes their credentials. Canonical d365-expense create submits by default; add --draft to opt out.")
 }

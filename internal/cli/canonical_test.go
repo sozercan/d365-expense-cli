@@ -26,26 +26,10 @@ func TestCanonicalHelpShowsStructuredCommands(t *testing.T) {
 	}
 }
 
-func TestCanonicalCreateRequiresExactlyOneFinalActionAndSource(t *testing.T) {
+func TestCanonicalCreateRequiresSource(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	if code := runCanonical([]string{"create", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("missing final action code = %d", code)
-	}
-	if !strings.Contains(stderr.String(), "exactly one of --draft or --submit") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := runCanonical([]string{"create", "--draft", "--submit", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("conflicting final action code = %d", code)
-	}
-	if !strings.Contains(stderr.String(), "exactly one of --draft or --submit") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := runCanonical([]string{"create", "--draft", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
+	if code := runCanonical([]string{"create", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("missing source code = %d", code)
 	}
 	if !strings.Contains(stderr.String(), "exactly one of --har or --session") {
@@ -53,26 +37,7 @@ func TestCanonicalCreateRequiresExactlyOneFinalActionAndSource(t *testing.T) {
 	}
 }
 
-func TestCanonicalCreateSubmitRequiresConfirmationOnlyForExecution(t *testing.T) {
-	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	if code := runCanonical([]string{"create", "--submit", "--session", "work", "--purpose", "event"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("missing confirmation code = %d", code)
-	}
-	if !strings.Contains(stderr.String(), "requires --confirm-submit") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := runCanonical([]string{"create", "--submit", "--confirm-submit", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("dry-run confirmation code = %d", code)
-	}
-	if !strings.Contains(stderr.String(), "cannot be used with --dry-run") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-}
-
-func TestCanonicalCreateSubmitRoutesExplicitSubmit(t *testing.T) {
+func TestCanonicalCreateSubmitsByDefault(t *testing.T) {
 	t.Parallel()
 	var got []string
 	runners := defaultLegacyRunners()
@@ -81,16 +46,16 @@ func TestCanonicalCreateSubmitRoutesExplicitSubmit(t *testing.T) {
 		return 0
 	}
 	var stdout, stderr bytes.Buffer
-	if code := runCanonicalWithRunners([]string{"create", "--submit", "--confirm-submit", "--session", "work", "--purpose", "event"}, &stdout, &stderr, runners); code != 0 {
+	if code := runCanonicalWithRunners([]string{"create", "--session", "work", "--purpose", "event"}, &stdout, &stderr, runners); code != 0 {
 		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
 	}
-	want := []string{"--session", "work", "--purpose", "event", "--submit", "--confirm-submit", "--timeout", "45s", "--execute"}
+	want := []string{"--session", "work", "--purpose", "event", "--submit", "--timeout", "45s", "--execute"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
 
-func TestCanonicalCreateSubmitDryRunNeverConfirmsOrExecutes(t *testing.T) {
+func TestCanonicalCreateDefaultSubmitDryRunNeverExecutes(t *testing.T) {
 	t.Parallel()
 	var got []string
 	runners := defaultLegacyRunners()
@@ -99,7 +64,7 @@ func TestCanonicalCreateSubmitDryRunNeverConfirmsOrExecutes(t *testing.T) {
 		return 0
 	}
 	var stdout, stderr bytes.Buffer
-	if code := runCanonicalWithRunners([]string{"create", "--submit", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr, runners); code != 0 {
+	if code := runCanonicalWithRunners([]string{"create", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr, runners); code != 0 {
 		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
 	}
 	want := []string{"--session", "work", "--purpose", "event", "--submit", "--timeout", "45s"}
@@ -157,7 +122,7 @@ func TestCanonicalCreateDryRunOmitsExecute(t *testing.T) {
 	}
 }
 
-func TestCanonicalCreateSubmitRoutesReceiptsAndConfirmation(t *testing.T) {
+func TestCanonicalCreateSubmitsReceiptsByDefault(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	receipt := filepath.Join(dir, "receipt.png")
@@ -172,13 +137,13 @@ func TestCanonicalCreateSubmitRoutesReceiptsAndConfirmation(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := runCanonicalWithRunners([]string{
-		"create", "--submit", "--confirm-submit", "--session", "work", "--purpose", "event", "--receipt", receipt,
+		"create", "--session", "work", "--purpose", "event", "--receipt", receipt,
 	}, &stdout, &stderr, runners)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
 	}
 	want := []string{
-		"--session", "work", "--purpose", "event", "--submit", "--confirm-submit",
+		"--session", "work", "--purpose", "event", "--submit",
 		"--timeout", "2m0s", "--file", receipt, "--execute",
 	}
 	if !reflect.DeepEqual(got, want) {

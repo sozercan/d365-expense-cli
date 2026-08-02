@@ -15,12 +15,10 @@ d365-expense create \
 Treat the HAR as one-shot after a network operation begins. The CLI cannot
 checkpoint updated sequence state back into the HAR.
 
-Direct-HAR submission uses the same explicit gates:
+Direct-HAR creation also submits by default:
 
 ```bash
 d365-expense create \
-  --submit \
-  --confirm-submit \
   --har workspace.har \
   --purpose "Travel"
 ```

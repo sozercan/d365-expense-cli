@@ -3,8 +3,9 @@
 Thank you for helping improve `d365-expense-cli`.
 
 This project interacts with an unsupported, stateful Dynamics 365 web-client
-protocol. Changes must preserve operation-specific mutation allowlists,
-explicit submission intent, strict input validation, and fail-closed behavior.
+protocol. Changes must preserve operation-specific mutation allowlists, default
+submission semantics, the explicit `--draft` opt-out, strict input validation,
+and fail-closed behavior.
 
 ## Prerequisites
 
@@ -151,20 +152,19 @@ version
 
 Flags describe mode and input:
 
-- `create` requires exactly one of `--draft` or `--submit`;
-- an executing `--submit` also requires `--confirm-submit`;
+- `create` submits by default;
+- `--draft` explicitly saves without submitting;
 - `receipt attach` remains Draft-only and requires `--draft`;
 - `--receipt` is repeatable;
 - canonical mutation commands execute by default;
-- `--dry-run` disables network mutation and is incompatible with submission
-  confirmation; and
+- `--dry-run` disables network mutation; and
 - submission is only a creation-time final action, not a generic workflow or
   existing-report command.
 
 The old `msexpense` binary and flat commands are temporary compatibility
 surfaces. Legacy create commands retain their historical dry-run-by-default
-behavior. Compatibility changes must never broaden the mutation allowlist,
-infer submission intent, or bypass confirmation.
+behavior. Compatibility changes must never broaden the mutation allowlist or
+change the canonical default-submit / explicit-Draft contract accidentally.
 
 When changing CLI behavior, update all of:
 

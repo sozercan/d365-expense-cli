@@ -12,7 +12,7 @@ Choose the guide that matches what you are trying to do.
 - [Advanced usage](advanced-usage.md) — direct HAR mode, existing-report receipt
   attachment, and HAR utilities.
 - [Security model](security.md) — credentials, trust boundaries, failure
-  uncertainty, Draft preservation, and explicit-submission boundaries.
+  uncertainty, default submission, and the Draft opt-out boundary.
 - [Migration from msexpense](migration.md) — command, flag, binary, and
   environment-variable changes.
 

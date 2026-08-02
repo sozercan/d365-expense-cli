@@ -8,17 +8,11 @@ d365-expense create --draft --session work --purpose "Test" --dry-run
 
 ## Common errors
 
-### Exactly one of `--draft` or `--submit` is required
+### Submission versus Draft behavior
 
-`create` requires one explicit final action. Use `--draft` to save and close, or
-`--submit` to submit the newly created report. `receipt attach` remains
-Draft-only and still requires `--draft`.
-
-### Executing `--submit` requires `--confirm-submit`
-
-Preview submission with `--submit --dry-run`. After reviewing the plan, remove
-`--dry-run` and add `--confirm-submit`. The confirmation is rejected during a
-dry run so it cannot be copied into an unreviewed preview command.
+`create` submits the newly created report by default. Add `--draft` to save and
+close without submitting. `receipt attach` remains Draft-only and still
+requires `--draft`.
 
 ### Exactly one of `--har` or `--session` is required
 

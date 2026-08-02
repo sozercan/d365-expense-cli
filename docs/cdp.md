@@ -5,8 +5,8 @@ authentication from a dedicated local Microsoft Edge profile without manually
 exporting a HAR.
 
 CDP is used only to acquire session state. Acquisition itself does not submit
-an expense; a later `create --submit --confirm-submit` command may use the
-imported session.
+an expense; a later `create` command submits by default unless `--draft` is
+supplied.
 
 ## Requirements
 

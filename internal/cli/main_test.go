@@ -16,9 +16,12 @@ func TestHelpAndSubmitMode(t *testing.T) {
 	if code := run([]string{"create", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("help exit code = %d", code)
 	}
-	if !strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), "--submit") ||
-		!strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), "--confirm-submit") {
-		t.Fatalf("help did not describe submit mode: %s", stdout.String())
+	help := strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " "))
+	if !strings.Contains(help, "submit") || !strings.Contains(help, "--draft") {
+		t.Fatalf("help did not describe default submission and the Draft opt-out: %s", stdout.String())
+	}
+	if strings.Contains(help, "--submit") || strings.Contains(help, "--confirm-submit") {
+		t.Fatalf("help exposed redundant submission flags: %s", stdout.String())
 	}
 
 	stdout.Reset()
@@ -26,7 +29,7 @@ func TestHelpAndSubmitMode(t *testing.T) {
 	if code := run([]string{"submit"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("submit exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "create --submit") {
+	if !strings.Contains(stderr.String(), "d365-expense create") {
 		t.Fatalf("submit rejection = %s", stderr.String())
 	}
 }
@@ -128,21 +131,5 @@ func TestSessionCommandsRequireExplicitNames(t *testing.T) {
 		if strings.TrimSpace(stderr.String()) == "" {
 			t.Fatalf("run(%v) stderr = %q", args, stderr.String())
 		}
-	}
-}
-
-func TestLegacyCreateSubmitRequiresExplicitConfirmationBeforeSessionAccess(t *testing.T) {
-	t.Parallel()
-
-	var stdout, stderr bytes.Buffer
-	code := run([]string{
-		"create-draft", "--session", "does-not-exist", "--purpose", "event",
-		"--submit", "--execute",
-	}, &stdout, &stderr)
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
-	}
-	if !strings.Contains(stderr.String(), "requires --confirm-submit") {
-		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

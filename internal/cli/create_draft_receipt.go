@@ -45,7 +45,6 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 	flags.Var(&filePaths, "file", "private PNG receipt file; repeat for every receipt")
 	notes := flags.String("notes", "", "optional notes applied to every receipt")
 	submit := flags.Bool("submit", false, "submit the newly created report after attaching every receipt")
-	confirmSubmit := flags.Bool("confirm-submit", false, "confirm an executing submit operation")
 	execute := flags.Bool("execute", false, "create the report and perform its requested final action")
 	timeout := flags.Duration("timeout", 120*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
@@ -71,19 +70,6 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 		fmt.Fprintf(stderr, "%s requires a positive --timeout\n", commandName)
 		return 2
 	}
-	if *confirmSubmit && !*submit {
-		fmt.Fprintf(stderr, "%s: --confirm-submit requires --submit\n", commandName)
-		return 2
-	}
-	if *submit && *execute && !*confirmSubmit {
-		fmt.Fprintf(stderr, "%s: executing --submit requires --confirm-submit\n", commandName)
-		return 2
-	}
-	if *submit && !*execute && *confirmSubmit {
-		fmt.Fprintf(stderr, "%s: --confirm-submit is only valid with --execute\n", commandName)
-		return 2
-	}
-
 	contract := expense.BuiltinReceiptUploadContract()
 	if *receiptProtocolHAR != "" {
 		if err := requirePrivateCapture(*receiptProtocolHAR); err != nil {
@@ -144,7 +130,7 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 			fmt.Fprintf(stdout, "- %s\n", action)
 		}
 		if *submit {
-			fmt.Fprintln(stdout, "rerun with --execute --confirm-submit to create the report, attach all receipts, and submit it")
+			fmt.Fprintln(stdout, "rerun with --execute to create the report, attach all receipts, and submit it")
 		} else {
 			fmt.Fprintln(stdout, "rerun with --execute to create the Draft, attach all receipts, and save and close it")
 		}
