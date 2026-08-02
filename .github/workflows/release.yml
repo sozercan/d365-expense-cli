@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p build dist
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X github.com/sozercan/d365-expense-cli/internal/cli.version=${GITHUB_REF_NAME}"
+
+          for target in \
+            linux/amd64 linux/arm64 \
+            darwin/amd64 darwin/arm64 \
+            windows/amd64 windows/arm64; do
+            IFS=/ read -r goos goarch <<< "$target"
+            os_name="$goos"
+            binary="d365-expense"
+
+            if [[ "$goos" == "darwin" ]]; then
+              os_name="macos"
+            elif [[ "$goos" == "windows" ]]; then
+              binary+=".exe"
+            fi
+
+            package="d365-expense_${version}_${os_name}_${goarch}"
+            staging="build/$package"
+            mkdir -p "$staging"
+
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "$ldflags" \
+              -o "$staging/$binary" ./cmd/d365-expense
+
+            if [[ "$goos" == "windows" ]]; then
+              zip -j "dist/$package.zip" "$staging/$binary"
+            else
+              tar -C "$staging" -czf "dist/$package.tar.gz" "$binary"
+            fi
+          done
+
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip > checksums.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
