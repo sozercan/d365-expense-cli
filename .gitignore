@@ -1,0 +1,11 @@
+# Captures contain authenticated cookies, CSRF tokens, and financial data.
+captures/
+*.har
+*.session.json
+.env
+.env.*
+
+# Go build output.
+bin/
+dist/
+coverage.out

@@ -1,0 +1,192 @@
+package expense
+
+import (
+	"errors"
+	"slices"
+
+	"github.com/sozercan/d365-expense-cli/internal/capture"
+)
+
+const (
+	createDraftWithReceiptRequestCount = 12
+	receiptUploadEndpointPath          = "/filemanagement"
+	receiptDocumentType                = "File"
+)
+
+var receiptMultipartFieldOrder = []string{
+	"clientId",
+	"maxChunkSize",
+	"tableid",
+	"recid",
+	"companyid",
+	"accesstoken",
+	"notes",
+	"docuname",
+	"docutypeid",
+	"ischunked",
+	"docuRefRecId",
+	"files[]",
+}
+
+// ReceiptUploadContract is the validated, non-secret subset of a captured
+// receipt protocol profile needed to upload one PNG. Its fields are private so
+// callers must use the built-in contract or derive one from a validated capture
+// rather than inventing an upload shape.
+type ReceiptUploadContract struct {
+	endpointPath               string
+	multipartFieldOrder        []string
+	maxChunkSize               int64
+	documentType               string
+	maxSupportedSingleFileSize int64
+}
+
+// BuiltinReceiptUploadContract returns the validated, non-secret receipt
+// upload contract supported by this client. It removes the need to retain a
+// receipt HAR solely for these fixed protocol constants.
+func BuiltinReceiptUploadContract() ReceiptUploadContract {
+	contract, err := newReceiptUploadContract(capture.ReceiptUploadProfile{
+		EndpointPath:               receiptUploadEndpointPath,
+		MultipartFieldOrder:        receiptMultipartFieldOrder,
+		MaxChunkSize:               maxReceiptFileSize,
+		DocumentType:               receiptDocumentType,
+		MaxSupportedSingleFileSize: maxReceiptFileSize,
+	})
+	if err != nil {
+		panic("expense: invalid built-in receipt upload contract: " + err.Error())
+	}
+	return contract
+}
+
+// DefaultReceiptUploadContract is an alias for BuiltinReceiptUploadContract.
+func DefaultReceiptUploadContract() ReceiptUploadContract {
+	return BuiltinReceiptUploadContract()
+}
+
+// MaxSupportedSingleFileSize returns the maximum receipt size accepted by this
+// upload contract. A zero-value or otherwise invalid contract returns zero.
+func (contract ReceiptUploadContract) MaxSupportedSingleFileSize() int64 {
+	if contract.validate() != nil {
+		return 0
+	}
+	return contract.maxSupportedSingleFileSize
+}
+
+// ReceiptUploadContractFromProfile validates and snapshots only the non-secret
+// upload contract from a receipt profile. It deliberately ignores the profile's
+// report number, control IDs, session credentials, and sequence state.
+func ReceiptUploadContractFromProfile(profile *capture.ReceiptProfile) (ReceiptUploadContract, error) {
+	if profile == nil {
+		return ReceiptUploadContract{}, errors.New("expense: receipt protocol profile is nil")
+	}
+	return newReceiptUploadContract(profile.Upload)
+}
+
+func newReceiptUploadContract(profile capture.ReceiptUploadProfile) (ReceiptUploadContract, error) {
+	if profile.EndpointPath != receiptUploadEndpointPath ||
+		!slices.Equal(profile.MultipartFieldOrder, receiptMultipartFieldOrder) ||
+		profile.MaxChunkSize != maxReceiptFileSize ||
+		profile.MaxSupportedSingleFileSize != maxReceiptFileSize ||
+		profile.DocumentType != receiptDocumentType {
+		return ReceiptUploadContract{}, errors.New("expense: receipt upload contract is unsupported")
+	}
+	return ReceiptUploadContract{
+		endpointPath:               profile.EndpointPath,
+		multipartFieldOrder:        append([]string(nil), profile.MultipartFieldOrder...),
+		maxChunkSize:               profile.MaxChunkSize,
+		documentType:               profile.DocumentType,
+		maxSupportedSingleFileSize: profile.MaxSupportedSingleFileSize,
+	}, nil
+}
+
+func (contract ReceiptUploadContract) validate() error {
+	_, err := newReceiptUploadContract(capture.ReceiptUploadProfile{
+		EndpointPath:               contract.endpointPath,
+		MultipartFieldOrder:        contract.multipartFieldOrder,
+		MaxChunkSize:               contract.maxChunkSize,
+		DocumentType:               contract.documentType,
+		MaxSupportedSingleFileSize: contract.maxSupportedSingleFileSize,
+	})
+	return err
+}
+
+// CreateDraftReceiptInput pairs one receipt with the notes sent for that
+// receipt. Inputs are attached in slice order by CreateDraftWithReceipts.
+type CreateDraftReceiptInput struct {
+	Notes   string
+	Receipt ReceiptInput
+}
+
+// CreateDraftReceiptSummary is safe to print during a multi-receipt dry run.
+// It deliberately omits the arbitrary receipt notes, matching the original
+// single-receipt plan's non-secret summary surface.
+type CreateDraftReceiptSummary struct {
+	Receipt ReceiptSummary
+}
+
+// CreateDraftReceiptResult records one successful attachment and the
+// cumulative report receipt count immediately after it was confirmed.
+type CreateDraftReceiptResult struct {
+	Attached          AttachedReceipt
+	ReceiptCountAfter int
+}
+
+// CreateDraftWithReceiptsRequest describes one serialized workflow: create a
+// Draft report, attach one or more PNG receipts while its details form remains
+// open, then save and close it without submitting.
+type CreateDraftWithReceiptsRequest struct {
+	Purpose        string
+	Receipts       []CreateDraftReceiptInput
+	UploadContract ReceiptUploadContract
+}
+
+// CreateDraftWithReceiptsPlan is a credential-free, offline description of a
+// combined draft and ordered multi-receipt mutation.
+type CreateDraftWithReceiptsPlan struct {
+	Purpose      string
+	Receipts     []CreateDraftReceiptSummary
+	RequestCount int
+	Actions      []string
+}
+
+// CreateDraftWithReceiptsResult contains only non-secret outcome data from the
+// combined workflow. Receipts preserves the request order.
+type CreateDraftWithReceiptsResult struct {
+	Purpose            string
+	ReportNumber       string
+	Status             string
+	ReceiptCountBefore int
+	ReceiptCountAfter  int
+	Receipts           []CreateDraftReceiptResult
+	SavedAndClosed     bool
+}
+
+// CreateDraftWithReceiptRequest describes the compatibility single-receipt
+// workflow. New callers that may attach more than one receipt should use
+// CreateDraftWithReceiptsRequest.
+type CreateDraftWithReceiptRequest struct {
+	Purpose        string
+	Notes          string
+	Receipt        ReceiptInput
+	UploadContract ReceiptUploadContract
+}
+
+// CreateDraftWithReceiptPlan is a credential-free, offline description of the
+// combined draft and receipt mutation.
+type CreateDraftWithReceiptPlan struct {
+	Purpose      string
+	Receipt      ReceiptSummary
+	RequestCount int
+	Actions      []string
+}
+
+// CreateDraftWithReceiptResult contains only non-secret outcome data from the
+// combined workflow.
+type CreateDraftWithReceiptResult struct {
+	Purpose            string
+	ReportNumber       string
+	Status             string
+	ReceiptCountBefore int
+	ReceiptCountAfter  int
+	Attached           AttachedReceipt
+	SavedAndClosed     bool
+}
