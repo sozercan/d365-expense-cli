@@ -15,39 +15,29 @@ import (
 )
 
 const (
-	createDraftWithReceiptsBaseRequestCount       = 4
-	createDraftWithReceiptsBaseSequenceHeadroom   = int64(5)
-	createDraftWithReceiptsPerReceiptRequestCount = receiptRequestCount - 1
+	createReportWithReceiptsBaseRequestCount       = 4
+	createReportWithReceiptsBaseSequenceHeadroom   = int64(5)
+	createReportWithReceiptsPerReceiptRequestCount = receiptRequestCount - 1
 )
 
-// PlanCreateDraftWithReceipts returns an offline, credential-free description
-// of the combined draft and ordered multi-receipt workflow. It does not open
-// any receipt readers.
-func (client *Client) PlanCreateDraftWithReceipts(request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsPlan, error) {
-	return client.planCreateDraftWithReceipts(request, false)
-}
-
-// PlanCreateAndSubmitWithReceipts returns an offline plan for creating a new
-// Draft, attaching every receipt, and then explicitly submitting the report.
-func (client *Client) PlanCreateAndSubmitWithReceipts(request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsPlan, error) {
-	return client.planCreateDraftWithReceipts(request, true)
-}
-
-func (client *Client) planCreateDraftWithReceipts(request CreateDraftWithReceiptsRequest, submit bool) (CreateDraftWithReceiptsPlan, error) {
+// PlanCreateReportWithReceipts returns an offline, credential-free description
+// of the report creation, ordered receipt attachments, and explicit final
+// action. It does not open any receipt readers.
+func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithReceiptsRequest) (CreateReportWithReceiptsPlan, error) {
 	if client == nil {
-		return CreateDraftWithReceiptsPlan{}, errors.New("expense: client is nil")
+		return CreateReportWithReceiptsPlan{}, errors.New("expense: client is nil")
 	}
-	if err := validateCreateDraftWithReceiptsRequest(request); err != nil {
-		return CreateDraftWithReceiptsPlan{}, err
+	if err := validateCreateReportWithReceiptsRequest(request); err != nil {
+		return CreateReportWithReceiptsPlan{}, err
 	}
-	requestCount, err := createDraftWithReceiptsRequestCount(len(request.Receipts))
+	requestCount, err := createReportWithReceiptsRequestCount(len(request.Receipts))
 	if err != nil {
-		return CreateDraftWithReceiptsPlan{}, err
+		return CreateReportWithReceiptsPlan{}, err
 	}
 
-	receipts := make([]CreateDraftReceiptSummary, len(request.Receipts))
+	receipts := make([]CreateReportReceiptSummary, len(request.Receipts))
 	for index, receipt := range request.Receipts {
-		receipts[index] = CreateDraftReceiptSummary{
+		receipts[index] = CreateReportReceiptSummary{
 			Receipt: ReceiptSummary{
 				Filename:  receipt.Receipt.Filename,
 				MediaType: receipt.Receipt.MediaType,
@@ -56,10 +46,10 @@ func (client *Client) planCreateDraftWithReceipts(request CreateDraftWithReceipt
 		}
 	}
 	finalAction := "after all receipts succeed, click only SaveAndClose as the final report action"
-	if submit {
+	if request.FinalAction == ReportFinalActionSubmit {
 		finalAction = "after all receipts succeed, submit using only the exact discovered SubmitButton"
 	}
-	return CreateDraftWithReceiptsPlan{
+	return CreateReportWithReceiptsPlan{
 		Purpose:      request.Purpose,
 		Receipts:     receipts,
 		RequestCount: requestCount,
@@ -78,9 +68,9 @@ func (client *Client) planCreateDraftWithReceipts(request CreateDraftWithReceipt
 }
 
 // PlanCreateDraftWithReceipt preserves the original single-receipt planning
-// API by adapting it to PlanCreateDraftWithReceipts.
+// API by adapting it to PlanCreateReportWithReceipts.
 func (client *Client) PlanCreateDraftWithReceipt(request CreateDraftWithReceiptRequest) (CreateDraftWithReceiptPlan, error) {
-	plan, err := client.PlanCreateDraftWithReceipts(singleReceiptRequest(request))
+	plan, err := client.PlanCreateReportWithReceipts(singleReceiptRequest(request))
 	if err != nil {
 		return CreateDraftWithReceiptPlan{}, err
 	}
@@ -104,59 +94,45 @@ func (client *Client) PlanCreateDraftWithReceipt(request CreateDraftWithReceiptR
 	}, nil
 }
 
-// CreateDraftWithReceipts creates a new Draft, activates its Receipts tab once,
-// attaches one or more PNG receipts sequentially in one fresh session, verifies
-// Draft status and the cumulative count after each attachment, and clicks
-// SaveAndClose only after every receipt succeeds. It performs no retry or
-// compensating action.
-func (client *Client) CreateDraftWithReceipts(ctx context.Context, request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsResult, error) {
-	return client.createDraftWithReceipts(ctx, request, false)
-}
-
-// CreateAndSubmitWithReceipts creates a new Draft, attaches every receipt, and
-// then explicitly submits the report using only its exact discovered
-// SubmitButton. It does not approve, post, recall, or run generic workflow
-// commands.
-func (client *Client) CreateAndSubmitWithReceipts(ctx context.Context, request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsResult, error) {
-	return client.createDraftWithReceipts(ctx, request, true)
-}
-
-func (client *Client) createDraftWithReceipts(ctx context.Context, request CreateDraftWithReceiptsRequest, submit bool) (CreateDraftWithReceiptsResult, error) {
+// CreateReportWithReceipts creates a report, attaches every receipt, and
+// performs the request's explicit final action. It does not approve, post,
+// recall, or run generic workflow commands.
+func (client *Client) CreateReportWithReceipts(ctx context.Context, request CreateReportWithReceiptsRequest) (CreateReportWithReceiptsResult, error) {
 	if client == nil {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: client is nil")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: client is nil")
 	}
 	if ctx == nil {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: context is nil")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: context is nil")
 	}
-	if err := validateCreateDraftWithReceiptsRequest(request); err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+	if err := validateCreateReportWithReceiptsRequest(request); err != nil {
+		return CreateReportWithReceiptsResult{}, err
 	}
-	sequenceHeadroom, err := createDraftWithReceiptsSequenceHeadroom(len(request.Receipts))
+	sequenceHeadroom, err := createReportWithReceiptsSequenceHeadroom(len(request.Receipts))
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if client.nextClientSequence > math.MaxInt64-sequenceHeadroom {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: client sequence lacks headroom for draft creation with receipts")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: client sequence lacks headroom for report creation with receipts")
 	}
 
 	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
-	if submit {
+	if request.FinalAction == ReportFinalActionSubmit {
 		if err := dynamics.ValidateSubmitButton(draft.submitButton, draft.detailsRootID); err != nil {
-			return CreateDraftWithReceiptsResult{}, fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)
+			return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)
 		}
 	}
 	createdReceiptModel, err := dynamics.DiscoverReceiptModel(draft.responseBody)
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
 	if createdReceiptModel.ReceiptsTabPage.ID == "" || createdReceiptModel.ReceiptsTabPage.RootID != draft.detailsRootID {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: ReceiptsTabPage control not found in new report details form")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: ReceiptsTabPage control not found in new report details form")
 	}
 	beforeReceiptCount := -1
 	if createdReceiptModel.ReceiptCountPresent {
@@ -169,7 +145,7 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 		createdReceiptModel.ReceiptsTabPage.ID,
 	)
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
 	activateBody, err := client.sendValidated(ctx, []dynamics.Message{activate}, func(envelope dynamics.Envelope) error {
 		return validateActivateReceiptsTabEnvelope(
@@ -179,50 +155,50 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 		)
 	})
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, fmt.Errorf("expense: activate Receipts tab: %w", err)
+		return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activate Receipts tab: %w", err)
 	}
 	activatedModel, err := dynamics.DiscoverReceiptModel(activateBody)
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
 	if err := validateReceiptModelForOpenDraft(activatedModel, draft.reportNumber); err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
 	if activatedModel.AddReceiptButton.ID == "" || activatedModel.AddReceiptButton.Name != dynamics.ControlNewReceiptButton ||
 		activatedModel.AddReceiptButton.RootID != draft.detailsRootID {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: activated Receipts tab response lacks NewReceiptButton in the new report")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: activated Receipts tab response lacks NewReceiptButton in the new report")
 	}
 	if activatedModel.ReceiptCountPresent {
 		if beforeReceiptCount >= 0 && activatedModel.ReceiptCount != beforeReceiptCount {
-			return CreateDraftWithReceiptsResult{}, errors.New("expense: receipt count changed while activating the Receipts tab")
+			return CreateReportWithReceiptsResult{}, errors.New("expense: receipt count changed while activating the Receipts tab")
 		}
 		beforeReceiptCount = activatedModel.ReceiptCount
 	}
 	if beforeReceiptCount < 0 {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: new draft receipt count is missing after activating the Receipts tab")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: new draft receipt count is missing after activating the Receipts tab")
 	}
 	if len(request.Receipts) > maxInt()-beforeReceiptCount {
-		return CreateDraftWithReceiptsResult{}, errors.New("expense: cumulative receipt count would overflow")
+		return CreateReportWithReceiptsResult{}, errors.New("expense: cumulative receipt count would overflow")
 	}
 
 	saveAndCloseID := draft.saveAndCloseID
 	if activatedModel.SaveAndClose.ID != "" {
 		if activatedModel.SaveAndClose.RootID != draft.detailsRootID {
-			return CreateDraftWithReceiptsResult{}, errors.New("expense: activated Receipts tab returned SaveAndClose outside the new report")
+			return CreateReportWithReceiptsResult{}, errors.New("expense: activated Receipts tab returned SaveAndClose outside the new report")
 		}
 		saveAndCloseID = activatedModel.SaveAndClose.ID
 	}
 	submitButton := draft.submitButton
 	if activatedModel.SubmitButton.ID != "" {
 		if err := dynamics.ValidateSubmitButton(activatedModel.SubmitButton, draft.detailsRootID); err != nil {
-			return CreateDraftWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
+			return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
 		}
 		submitButton = activatedModel.SubmitButton
 	}
 
 	uploadEndpoint, err := receiptUploadEndpoint(client.origin, request.UploadContract)
 	if err != nil {
-		return CreateDraftWithReceiptsResult{}, err
+		return CreateReportWithReceiptsResult{}, err
 	}
 	receiptClient := &ReceiptClient{
 		httpClient:                 client.httpClient,
@@ -248,7 +224,7 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 		lastReceiptCount:           beforeReceiptCount,
 	}
 
-	attachedReceipts := make([]CreateDraftReceiptResult, 0, len(request.Receipts))
+	attachedReceipts := make([]CreateReportReceiptResult, 0, len(request.Receipts))
 	for index, receipt := range request.Receipts {
 		attached, attachErr := receiptClient.attachReceiptWithoutSave(ctx, AttachReceiptRequest{
 			ReportNumber: draft.reportNumber,
@@ -257,7 +233,7 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 		})
 		client.syncReceiptSession(receiptClient)
 		if attachErr != nil {
-			return CreateDraftWithReceiptsResult{}, fmt.Errorf(
+			return CreateReportWithReceiptsResult{}, fmt.Errorf(
 				"expense: attach receipt %d (%q) to new draft: %w",
 				index+1,
 				receipt.Receipt.Filename,
@@ -266,13 +242,13 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 		}
 		expectedCount := beforeReceiptCount + index + 1
 		if attached.Status != "Draft" || attached.ReceiptCount != expectedCount {
-			return CreateDraftWithReceiptsResult{}, fmt.Errorf(
+			return CreateReportWithReceiptsResult{}, fmt.Errorf(
 				"expense: receipt %d confirmation did not preserve Draft status and cumulative count %d",
 				index+1,
 				expectedCount,
 			)
 		}
-		attachedReceipts = append(attachedReceipts, CreateDraftReceiptResult{
+		attachedReceipts = append(attachedReceipts, CreateReportReceiptResult{
 			Attached:          attached.Attached,
 			ReceiptCountAfter: attached.ReceiptCount,
 		})
@@ -281,23 +257,23 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 	status := "Draft"
 	savedAndClosed := false
 	submitted := false
-	if submit {
+	if request.FinalAction == ReportFinalActionSubmit {
 		client.syncReceiptSession(receiptClient)
 		status, err = client.submitOpenDraft(ctx, draft.reportNumber, draft.detailsRootID, receiptClient.submitButton)
 		if err != nil {
-			return CreateDraftWithReceiptsResult{}, err
+			return CreateReportWithReceiptsResult{}, err
 		}
 		submitted = true
 	} else {
 		if err := receiptClient.saveAndClose(ctx); err != nil {
 			client.syncReceiptSession(receiptClient)
-			return CreateDraftWithReceiptsResult{}, err
+			return CreateReportWithReceiptsResult{}, err
 		}
 		client.syncReceiptSession(receiptClient)
 		savedAndClosed = true
 	}
 
-	return CreateDraftWithReceiptsResult{
+	return CreateReportWithReceiptsResult{
 		Purpose:            request.Purpose,
 		ReportNumber:       draft.reportNumber,
 		Status:             status,
@@ -310,9 +286,9 @@ func (client *Client) createDraftWithReceipts(ctx context.Context, request Creat
 }
 
 // CreateDraftWithReceipt preserves the original single-receipt execution API
-// by adapting it to CreateDraftWithReceipts.
+// by adapting it to CreateReportWithReceipts.
 func (client *Client) CreateDraftWithReceipt(ctx context.Context, request CreateDraftWithReceiptRequest) (CreateDraftWithReceiptResult, error) {
-	result, err := client.CreateDraftWithReceipts(ctx, singleReceiptRequest(request))
+	result, err := client.CreateReportWithReceipts(ctx, singleReceiptRequest(request))
 	if err != nil {
 		return CreateDraftWithReceiptResult{}, err
 	}
@@ -324,22 +300,22 @@ func (client *Client) CreateDraftWithReceipt(ctx context.Context, request Create
 		ReceiptCountAfter:  result.ReceiptCountAfter,
 		Attached:           result.Receipts[0].Attached,
 		SavedAndClosed:     result.SavedAndClosed,
-		Submitted:          result.Submitted,
 	}, nil
 }
 
-func singleReceiptRequest(request CreateDraftWithReceiptRequest) CreateDraftWithReceiptsRequest {
-	return CreateDraftWithReceiptsRequest{
+func singleReceiptRequest(request CreateDraftWithReceiptRequest) CreateReportWithReceiptsRequest {
+	return CreateReportWithReceiptsRequest{
 		Purpose: request.Purpose,
-		Receipts: []CreateDraftReceiptInput{{
+		Receipts: []CreateReportReceiptInput{{
 			Notes:   request.Notes,
 			Receipt: request.Receipt,
 		}},
 		UploadContract: request.UploadContract,
+		FinalAction:    ReportFinalActionSaveDraft,
 	}
 }
 
-func validateCreateDraftWithReceiptsRequest(request CreateDraftWithReceiptsRequest) error {
+func validateCreateReportWithReceiptsRequest(request CreateReportWithReceiptsRequest) error {
 	if err := validatePurpose(request.Purpose); err != nil {
 		return err
 	}
@@ -348,6 +324,9 @@ func validateCreateDraftWithReceiptsRequest(request CreateDraftWithReceiptsReque
 	}
 	if len(request.Receipts) == 0 {
 		return errors.New("expense: at least one receipt is required")
+	}
+	if request.FinalAction != ReportFinalActionSubmit && request.FinalAction != ReportFinalActionSaveDraft {
+		return errors.New("expense: report final action is invalid")
 	}
 	for index, receipt := range request.Receipts {
 		if _, err := validateReceiptInput(
@@ -361,25 +340,25 @@ func validateCreateDraftWithReceiptsRequest(request CreateDraftWithReceiptsReque
 	return nil
 }
 
-func createDraftWithReceiptsRequestCount(receiptCount int) (int, error) {
+func createReportWithReceiptsRequestCount(receiptCount int) (int, error) {
 	if receiptCount < 1 {
 		return 0, errors.New("expense: at least one receipt is required")
 	}
-	if receiptCount > (maxInt()-createDraftWithReceiptsBaseRequestCount)/createDraftWithReceiptsPerReceiptRequestCount {
+	if receiptCount > (maxInt()-createReportWithReceiptsBaseRequestCount)/createReportWithReceiptsPerReceiptRequestCount {
 		return 0, errors.New("expense: receipt count is too large")
 	}
-	return createDraftWithReceiptsBaseRequestCount + receiptCount*createDraftWithReceiptsPerReceiptRequestCount, nil
+	return createReportWithReceiptsBaseRequestCount + receiptCount*createReportWithReceiptsPerReceiptRequestCount, nil
 }
 
-func createDraftWithReceiptsSequenceHeadroom(receiptCount int) (int64, error) {
+func createReportWithReceiptsSequenceHeadroom(receiptCount int) (int64, error) {
 	if receiptCount < 1 {
 		return 0, errors.New("expense: at least one receipt is required")
 	}
 	count := int64(receiptCount)
-	if count > (math.MaxInt64-createDraftWithReceiptsBaseSequenceHeadroom)/receiptAttachmentSequenceHeadroom {
+	if count > (math.MaxInt64-createReportWithReceiptsBaseSequenceHeadroom)/receiptAttachmentSequenceHeadroom {
 		return 0, errors.New("expense: receipt count is too large")
 	}
-	return createDraftWithReceiptsBaseSequenceHeadroom + count*receiptAttachmentSequenceHeadroom, nil
+	return createReportWithReceiptsBaseSequenceHeadroom + count*receiptAttachmentSequenceHeadroom, nil
 }
 
 func maxInt() int {

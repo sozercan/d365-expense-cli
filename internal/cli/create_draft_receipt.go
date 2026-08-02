@@ -102,17 +102,17 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
 		return 1
 	}
-	request := expense.CreateDraftWithReceiptsRequest{
+	finalAction := expense.ReportFinalActionSaveDraft
+	if *submit {
+		finalAction = expense.ReportFinalActionSubmit
+	}
+	request := expense.CreateReportWithReceiptsRequest{
 		Purpose:        *purpose,
 		Receipts:       receipts,
 		UploadContract: contract,
+		FinalAction:    finalAction,
 	}
-	var plan expense.CreateDraftWithReceiptsPlan
-	if *submit {
-		plan, err = client.PlanCreateAndSubmitWithReceipts(request)
-	} else {
-		plan, err = client.PlanCreateDraftWithReceipts(request)
-	}
+	plan, err := client.PlanCreateReportWithReceipts(request)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
 		return 1
@@ -149,13 +149,7 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	var result expense.CreateDraftWithReceiptsResult
-	var operationErr error
-	if *submit {
-		result, operationErr = client.CreateAndSubmitWithReceipts(ctx, request)
-	} else {
-		result, operationErr = client.CreateDraftWithReceipts(ctx, request)
-	}
+	result, operationErr := client.CreateReportWithReceipts(ctx, request)
 	var checkpointErr error
 	if execution != nil {
 		checkpointErr = execution.finish(operationErr)
@@ -188,14 +182,14 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 	return 0
 }
 
-func receiptInputsFromPaths(paths []string, notes string, maxSize int64) ([]expense.CreateDraftReceiptInput, error) {
-	result := make([]expense.CreateDraftReceiptInput, 0, len(paths))
+func receiptInputsFromPaths(paths []string, notes string, maxSize int64) ([]expense.CreateReportReceiptInput, error) {
+	result := make([]expense.CreateReportReceiptInput, 0, len(paths))
 	for index, path := range paths {
 		receipt, err := receiptInputFromPath(path, maxSize)
 		if err != nil {
 			return nil, fmt.Errorf("validate receipt %d: %w", index+1, err)
 		}
-		result = append(result, expense.CreateDraftReceiptInput{Notes: notes, Receipt: receipt})
+		result = append(result, expense.CreateReportReceiptInput{Notes: notes, Receipt: receipt})
 	}
 	return result, nil
 }

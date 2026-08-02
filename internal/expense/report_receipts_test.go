@@ -47,7 +47,7 @@ type multiReceiptObservation struct {
 	uploads       []observedMultiUpload
 }
 
-func TestCreateDraftWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *testing.T) {
+func TestCreateReportWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *testing.T) {
 	files := [][]byte{
 		[]byte("\x89PNG\r\n\x1a\nfirst-receipt"),
 		[]byte("\x89PNG\r\n\x1a\nsecond-receipt"),
@@ -67,10 +67,11 @@ func TestCreateDraftWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *te
 	}
 
 	opened := make([]int, len(files))
-	request := expense.CreateDraftWithReceiptsRequest{
+	request := expense.CreateReportWithReceiptsRequest{
 		Purpose:        "Conference travel",
 		UploadContract: contract,
-		Receipts: []expense.CreateDraftReceiptInput{
+		FinalAction:    expense.ReportFinalActionSaveDraft,
+		Receipts: []expense.CreateReportReceiptInput{
 			{
 				Notes: "Ground transport outbound",
 				Receipt: expense.ReceiptInput{
@@ -98,9 +99,9 @@ func TestCreateDraftWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *te
 		},
 	}
 
-	plan, err := client.PlanCreateDraftWithReceipts(request)
+	plan, err := client.PlanCreateReportWithReceipts(request)
 	if err != nil {
-		t.Fatalf("PlanCreateDraftWithReceipts() error = %v", err)
+		t.Fatalf("PlanCreateReportWithReceipts() error = %v", err)
 	}
 	if plan.Purpose != request.Purpose || plan.RequestCount != 20 || len(plan.Receipts) != 2 {
 		t.Fatalf("plan = %#v", plan)
@@ -115,24 +116,24 @@ func TestCreateDraftWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *te
 		t.Fatalf("plan opened files or sent requests: opened=%v requests=%d", opened, observed.requestCount)
 	}
 
-	result, err := client.CreateDraftWithReceipts(context.Background(), request)
+	result, err := client.CreateReportWithReceipts(context.Background(), request)
 	if err != nil {
-		t.Fatalf("CreateDraftWithReceipts() error = %v", err)
+		t.Fatalf("CreateReportWithReceipts() error = %v", err)
 	}
-	want := expense.CreateDraftWithReceiptsResult{
+	want := expense.CreateReportWithReceiptsResult{
 		Purpose:            request.Purpose,
 		ReportNumber:       combinedReportNumber,
 		Status:             "Draft",
 		ReceiptCountBefore: 0,
 		ReceiptCountAfter:  2,
-		Receipts: []expense.CreateDraftReceiptResult{
+		Receipts: []expense.CreateReportReceiptResult{
 			{Attached: expense.AttachedReceipt{Filename: "transport-outbound.png", Size: int64(len(files[0]))}, ReceiptCountAfter: 1},
 			{Attached: expense.AttachedReceipt{Filename: "transport-return.png", Size: int64(len(files[1]))}, ReceiptCountAfter: 2},
 		},
 		SavedAndClosed: true,
 	}
 	if !reflect.DeepEqual(result, want) {
-		t.Fatalf("CreateDraftWithReceipts() = %#v, want %#v", result, want)
+		t.Fatalf("CreateReportWithReceipts() = %#v, want %#v", result, want)
 	}
 	if !reflect.DeepEqual(opened, []int{1, 1}) {
 		t.Fatalf("receipt readers opened = %v, want [1 1]", opened)
@@ -165,7 +166,7 @@ func TestCreateDraftWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *te
 	}
 }
 
-func TestCreateAndSubmitWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *testing.T) {
+func TestCreateReportWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *testing.T) {
 	file := []byte("\x89PNG\r\n\x1a\nsubmit-receipt")
 	server, observed := newMultiReceiptWorkflowServer(t, multiReceiptServerOptions{receiptCount: 1, submit: true}, [][]byte{file})
 	defer server.Close()
@@ -178,10 +179,11 @@ func TestCreateAndSubmitWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := expense.CreateDraftWithReceiptsRequest{
+	request := expense.CreateReportWithReceiptsRequest{
 		Purpose:        "Submit with receipt",
 		UploadContract: contract,
-		Receipts: []expense.CreateDraftReceiptInput{{
+		FinalAction:    expense.ReportFinalActionSubmit,
+		Receipts: []expense.CreateReportReceiptInput{{
 			Notes: "travel",
 			Receipt: expense.ReceiptInput{
 				Filename: "submit.png", MediaType: "image/png", Size: int64(len(file)),
@@ -190,7 +192,7 @@ func TestCreateAndSubmitWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *test
 		}},
 	}
 
-	plan, err := client.PlanCreateAndSubmitWithReceipts(request)
+	plan, err := client.PlanCreateReportWithReceipts(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestCreateAndSubmitWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *test
 		t.Fatalf("plan=%#v requests=%d", plan, observed.requestCount)
 	}
 
-	result, err := client.CreateAndSubmitWithReceipts(context.Background(), request)
+	result, err := client.CreateReportWithReceipts(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +212,7 @@ func TestCreateAndSubmitWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *test
 	}
 }
 
-func TestCreateDraftWithReceiptsValidatesEveryInputBeforeNetwork(t *testing.T) {
+func TestCreateReportWithReceiptsValidatesEveryInputBeforeNetwork(t *testing.T) {
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requests++
@@ -228,10 +230,11 @@ func TestCreateDraftWithReceiptsValidatesEveryInputBeforeNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	opened := 0
-	request := expense.CreateDraftWithReceiptsRequest{
+	request := expense.CreateReportWithReceiptsRequest{
 		Purpose:        "Validate all receipts",
 		UploadContract: contract,
-		Receipts: []expense.CreateDraftReceiptInput{
+		FinalAction:    expense.ReportFinalActionSaveDraft,
+		Receipts: []expense.CreateReportReceiptInput{
 			{Receipt: expense.ReceiptInput{
 				Filename: "first.png", MediaType: "image/png", Size: 1,
 				Open: func() (io.ReadCloser, error) {
@@ -249,21 +252,34 @@ func TestCreateDraftWithReceiptsValidatesEveryInputBeforeNetwork(t *testing.T) {
 		},
 	}
 
-	if _, err := client.PlanCreateDraftWithReceipts(request); err == nil || !strings.Contains(err.Error(), "receipt 2") {
-		t.Fatalf("PlanCreateDraftWithReceipts() error = %v, want receipt 2 validation error", err)
+	if _, err := client.PlanCreateReportWithReceipts(request); err == nil || !strings.Contains(err.Error(), "receipt 2") {
+		t.Fatalf("PlanCreateReportWithReceipts() error = %v, want receipt 2 validation error", err)
 	}
-	if _, err := client.CreateDraftWithReceipts(context.Background(), request); err == nil || !strings.Contains(err.Error(), "receipt 2") {
-		t.Fatalf("CreateDraftWithReceipts() error = %v, want receipt 2 validation error", err)
+	if _, err := client.CreateReportWithReceipts(context.Background(), request); err == nil || !strings.Contains(err.Error(), "receipt 2") {
+		t.Fatalf("CreateReportWithReceipts() error = %v, want receipt 2 validation error", err)
 	}
 	if requests != 0 || opened != 0 {
 		t.Fatalf("invalid request performed side effects: requests=%d opened=%d", requests, opened)
 	}
 
+	request.Receipts = request.Receipts[:1]
+	request.FinalAction = ""
+	if _, err := client.PlanCreateReportWithReceipts(request); err == nil || !strings.Contains(err.Error(), "final action") {
+		t.Fatalf("invalid final action plan error = %v", err)
+	}
+	if _, err := client.CreateReportWithReceipts(context.Background(), request); err == nil || !strings.Contains(err.Error(), "final action") {
+		t.Fatalf("invalid final action execute error = %v", err)
+	}
+	if requests != 0 || opened != 0 {
+		t.Fatalf("invalid final action performed side effects: requests=%d opened=%d", requests, opened)
+	}
+
 	request.Receipts = nil
-	if _, err := client.PlanCreateDraftWithReceipts(request); err == nil || !strings.Contains(err.Error(), "at least one receipt") {
+	request.FinalAction = expense.ReportFinalActionSaveDraft
+	if _, err := client.PlanCreateReportWithReceipts(request); err == nil || !strings.Contains(err.Error(), "at least one receipt") {
 		t.Fatalf("empty receipt plan error = %v", err)
 	}
-	if _, err := client.CreateDraftWithReceipts(context.Background(), request); err == nil || !strings.Contains(err.Error(), "at least one receipt") {
+	if _, err := client.CreateReportWithReceipts(context.Background(), request); err == nil || !strings.Contains(err.Error(), "at least one receipt") {
 		t.Fatalf("empty receipt execute error = %v", err)
 	}
 	if requests != 0 || opened != 0 {
@@ -271,7 +287,7 @@ func TestCreateDraftWithReceiptsValidatesEveryInputBeforeNetwork(t *testing.T) {
 	}
 }
 
-func TestCreateDraftWithReceiptsDoesNotSaveWhenLaterCumulativeCountFails(t *testing.T) {
+func TestCreateReportWithReceiptsDoesNotSaveWhenLaterCumulativeCountFails(t *testing.T) {
 	files := [][]byte{[]byte("first"), []byte("second")}
 	server, observed := newMultiReceiptWorkflowServer(t, multiReceiptServerOptions{
 		receiptCount:        2,
@@ -293,10 +309,10 @@ func TestCreateDraftWithReceiptsDoesNotSaveWhenLaterCumulativeCountFails(t *test
 		t.Fatal(err)
 	}
 	opened := []int{0, 0}
-	receipts := make([]expense.CreateDraftReceiptInput, 2)
+	receipts := make([]expense.CreateReportReceiptInput, 2)
 	for index := range receipts {
 		index := index
-		receipts[index] = expense.CreateDraftReceiptInput{
+		receipts[index] = expense.CreateReportReceiptInput{
 			Notes: fmt.Sprintf("receipt %d", index+1),
 			Receipt: expense.ReceiptInput{
 				Filename: fmt.Sprintf("receipt-%d.png", index+1), MediaType: "image/png", Size: int64(len(files[index])),
@@ -308,11 +324,12 @@ func TestCreateDraftWithReceiptsDoesNotSaveWhenLaterCumulativeCountFails(t *test
 		}
 	}
 
-	_, err = client.CreateDraftWithReceipts(context.Background(), expense.CreateDraftWithReceiptsRequest{
+	_, err = client.CreateReportWithReceipts(context.Background(), expense.CreateReportWithReceiptsRequest{
 		Purpose: "Cumulative count failure", Receipts: receipts, UploadContract: contract,
+		FinalAction: expense.ReportFinalActionSaveDraft,
 	})
 	if err == nil || !strings.Contains(err.Error(), "attach receipt 2") || !strings.Contains(err.Error(), "exactly one") {
-		t.Fatalf("CreateDraftWithReceipts() error = %v", err)
+		t.Fatalf("CreateReportWithReceipts() error = %v", err)
 	}
 	if !reflect.DeepEqual(opened, []int{1, 1}) || len(observed.uploads) != 2 {
 		t.Fatalf("opened=%v uploads=%d", opened, len(observed.uploads))
@@ -327,7 +344,7 @@ func TestCreateDraftWithReceiptsDoesNotSaveWhenLaterCumulativeCountFails(t *test
 	}
 }
 
-func TestCreateDraftWithReceiptsRejectsAggregateSequenceExhaustionBeforeNetwork(t *testing.T) {
+func TestCreateReportWithReceiptsRejectsAggregateSequenceExhaustionBeforeNetwork(t *testing.T) {
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requests++
@@ -349,8 +366,8 @@ func TestCreateDraftWithReceiptsRejectsAggregateSequenceExhaustionBeforeNetwork(
 		t.Fatal(err)
 	}
 	opened := 0
-	receipt := func(name string) expense.CreateDraftReceiptInput {
-		return expense.CreateDraftReceiptInput{Receipt: expense.ReceiptInput{
+	receipt := func(name string) expense.CreateReportReceiptInput {
+		return expense.CreateReportReceiptInput{Receipt: expense.ReceiptInput{
 			Filename: name, MediaType: "image/png", Size: 1,
 			Open: func() (io.ReadCloser, error) {
 				opened++
@@ -358,12 +375,13 @@ func TestCreateDraftWithReceiptsRejectsAggregateSequenceExhaustionBeforeNetwork(
 			},
 		}}
 	}
-	_, err = client.CreateDraftWithReceipts(context.Background(), expense.CreateDraftWithReceiptsRequest{
+	_, err = client.CreateReportWithReceipts(context.Background(), expense.CreateReportWithReceiptsRequest{
 		Purpose: "Aggregate headroom", UploadContract: contract,
-		Receipts: []expense.CreateDraftReceiptInput{receipt("one.png"), receipt("two.png")},
+		Receipts:    []expense.CreateReportReceiptInput{receipt("one.png"), receipt("two.png")},
+		FinalAction: expense.ReportFinalActionSaveDraft,
 	})
 	if err == nil || !strings.Contains(err.Error(), "headroom") {
-		t.Fatalf("CreateDraftWithReceipts() error = %v, want headroom error", err)
+		t.Fatalf("CreateReportWithReceipts() error = %v, want headroom error", err)
 	}
 	if requests != 0 || opened != 0 {
 		t.Fatalf("headroom rejection performed side effects: requests=%d opened=%d", requests, opened)
