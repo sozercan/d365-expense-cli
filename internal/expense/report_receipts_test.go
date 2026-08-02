@@ -513,7 +513,7 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 				handleMultiReceiptStage(t, w, envelope, last, serverSequence, receiptIndex, offset, options, observed)
 				return
 			}
-			finalStage := createDraftWithReceiptsRequestCountForTest(options.receiptCount)
+			finalStage := createReportWithReceiptsRequestCountForTest(options.receiptCount)
 			if stage != finalStage {
 				t.Fatalf("unexpected stage %d", stage)
 			}
@@ -662,7 +662,7 @@ func multiReceiptStage(stage, receiptCount int) (receiptIndex, offset int, ok bo
 	return relative / 8, relative % 8, true
 }
 
-func createDraftWithReceiptsRequestCountForTest(receiptCount int) int {
+func createReportWithReceiptsRequestCountForTest(receiptCount int) int {
 	return 4 + receiptCount*8
 }
 

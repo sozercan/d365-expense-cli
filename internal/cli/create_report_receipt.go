@@ -26,15 +26,17 @@ func (paths *receiptPathList) Set(value string) error {
 	return nil
 }
 
+// runCreateDraftWithReceipt preserves the deprecated singular legacy command.
 func runCreateDraftWithReceipt(args []string, stdout, stderr io.Writer) int {
-	return runCreateDraftWithReceiptsCommand("create-draft-with-receipt", args, stdout, stderr)
+	return runCreateReportWithReceiptsCommand("create-draft-with-receipt", args, stdout, stderr)
 }
 
+// runCreateDraftWithReceipts preserves the deprecated plural legacy command.
 func runCreateDraftWithReceipts(args []string, stdout, stderr io.Writer) int {
-	return runCreateDraftWithReceiptsCommand("create-draft-with-receipts", args, stdout, stderr)
+	return runCreateReportWithReceiptsCommand("create-draft-with-receipts", args, stdout, stderr)
 }
 
-func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout, stderr io.Writer) int {
+func runCreateReportWithReceiptsCommand(commandName string, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	harPath := flags.String("har", "", "path to a private raw HAR capture")

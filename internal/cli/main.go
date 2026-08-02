@@ -115,12 +115,12 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
 		return 1
 	}
-	var plan expense.Plan
+	finalAction := expense.ReportFinalActionSaveDraft
 	if *submit {
-		plan, err = client.PlanCreateAndSubmit(*purpose)
-	} else {
-		plan, err = client.PlanCreateDraft(*purpose)
+		finalAction = expense.ReportFinalActionSubmit
 	}
+	reportRequest := expense.CreateReportRequest{Purpose: *purpose, FinalAction: finalAction}
+	plan, err := client.PlanCreateReport(reportRequest)
 	if err != nil {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
 		return 1
@@ -153,13 +153,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	var report expense.ReportResult
-	var operationErr error
-	if *submit {
-		report, operationErr = client.CreateAndSubmit(ctx, *purpose)
-	} else {
-		report, operationErr = client.CreateDraft(ctx, *purpose)
-	}
+	report, operationErr := client.CreateReport(ctx, reportRequest)
 	var checkpointErr error
 	if execution != nil {
 		checkpointErr = execution.finish(operationErr)

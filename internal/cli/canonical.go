@@ -151,32 +151,32 @@ type commandRuntime struct {
 }
 
 type legacyRunners struct {
-	createDraft             func([]string, io.Writer, io.Writer) int
-	createDraftWithReceipts func([]string, io.Writer, io.Writer) int
-	attachReceipt           func([]string, io.Writer, io.Writer) int
-	sessionImport           func([]string, io.Writer, io.Writer) int
-	sessionImportCDP        func([]string, io.Writer, io.Writer) int
-	sessionList             func([]string, io.Writer, io.Writer) int
-	sessionInspect          func([]string, io.Writer, io.Writer) int
-	sessionRemove           func([]string, io.Writer, io.Writer) int
-	sessionUnlock           func([]string, io.Writer, io.Writer) int
-	harInspect              func([]string, io.Writer, io.Writer) int
-	harCapture              func([]string, io.Writer, io.Writer) int
+	createReport             func([]string, io.Writer, io.Writer) int
+	createReportWithReceipts func([]string, io.Writer, io.Writer) int
+	attachReceipt            func([]string, io.Writer, io.Writer) int
+	sessionImport            func([]string, io.Writer, io.Writer) int
+	sessionImportCDP         func([]string, io.Writer, io.Writer) int
+	sessionList              func([]string, io.Writer, io.Writer) int
+	sessionInspect           func([]string, io.Writer, io.Writer) int
+	sessionRemove            func([]string, io.Writer, io.Writer) int
+	sessionUnlock            func([]string, io.Writer, io.Writer) int
+	harInspect               func([]string, io.Writer, io.Writer) int
+	harCapture               func([]string, io.Writer, io.Writer) int
 }
 
 func defaultLegacyRunners() legacyRunners {
 	return legacyRunners{
-		createDraft:             runCreateDraft,
-		createDraftWithReceipts: runCreateDraftWithReceipts,
-		attachReceipt:           runAttachReceipt,
-		sessionImport:           runSessionImport,
-		sessionImportCDP:        runSessionImportCDP,
-		sessionList:             runSessionList,
-		sessionInspect:          runSessionInspect,
-		sessionRemove:           runSessionRemove,
-		sessionUnlock:           runSessionUnlock,
-		harInspect:              runInspect,
-		harCapture:              runCaptureDraft,
+		createReport:             runCreateDraft,
+		createReportWithReceipts: runCreateDraftWithReceipts,
+		attachReceipt:            runAttachReceipt,
+		sessionImport:            runSessionImport,
+		sessionImportCDP:         runSessionImportCDP,
+		sessionList:              runSessionList,
+		sessionInspect:           runSessionInspect,
+		sessionRemove:            runSessionRemove,
+		sessionUnlock:            runSessionUnlock,
+		harInspect:               runInspect,
+		harCapture:               runCaptureDraft,
 	}
 }
 
@@ -221,7 +221,7 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 		if !command.DryRun {
 			args = append(args, "--execute")
 		}
-		return invokeLegacy(rt.runners.createDraft, args, rt)
+		return invokeLegacy(rt.runners.createReport, args, rt)
 	}
 	args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 120*time.Second).String())
 	for _, receipt := range command.Receipts {
@@ -236,7 +236,7 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	if !command.DryRun {
 		args = append(args, "--execute")
 	}
-	return invokeLegacy(rt.runners.createDraftWithReceipts, args, rt)
+	return invokeLegacy(rt.runners.createReportWithReceipts, args, rt)
 }
 
 func (command *receiptAttachCommand) Run(rt *commandRuntime) error {

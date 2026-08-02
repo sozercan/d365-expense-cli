@@ -51,7 +51,7 @@ func TestNewFromBootstrapSnapshotsIndependentState(t *testing.T) {
 	}
 }
 
-func TestDraftHTTPPathMergesCookieAndHeaderRotation(t *testing.T) {
+func TestSaveDraftHTTPPathMergesCookieAndHeaderRotation(t *testing.T) {
 	const (
 		rotatedHeader = "rotated-draft-header"
 		rotatedCookie = "rotated-draft-cookie"
@@ -114,8 +114,9 @@ func TestDraftHTTPPathMergesCookieAndHeaderRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFromBootstrap() error = %v", err)
 	}
-	if _, err := client.CreateDraft(context.Background(), "Rotated session state"); err != nil {
-		t.Fatalf("CreateDraft() error = %v", err)
+	request := CreateReportRequest{Purpose: "Rotated session state", FinalAction: ReportFinalActionSaveDraft}
+	if _, err := client.CreateReport(context.Background(), request); err != nil {
+		t.Fatalf("CreateReport() error = %v", err)
 	}
 
 	snapshot, err := client.SnapshotBootstrapProfile()

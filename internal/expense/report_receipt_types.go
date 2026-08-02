@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	createDraftWithReceiptRequestCount = 12
-	receiptUploadEndpointPath          = "/filemanagement"
-	receiptDocumentType                = "File"
+	receiptUploadEndpointPath = "/filemanagement"
+	receiptDocumentType       = "File"
 )
 
 var receiptMultipartFieldOrder = []string{
@@ -109,15 +108,6 @@ func (contract ReceiptUploadContract) validate() error {
 	return err
 }
 
-// ReportFinalAction selects the final action after report creation and receipt
-// attachment complete.
-type ReportFinalAction string
-
-const (
-	ReportFinalActionSubmit    ReportFinalAction = "submit"
-	ReportFinalActionSaveDraft ReportFinalAction = "save_draft"
-)
-
 // CreateReportReceiptInput pairs one receipt with the notes sent for that
 // receipt. Inputs are attached in slice order by CreateReportWithReceipts.
 type CreateReportReceiptInput struct {
@@ -167,35 +157,4 @@ type CreateReportWithReceiptsResult struct {
 	Receipts           []CreateReportReceiptResult
 	SavedAndClosed     bool
 	Submitted          bool
-}
-
-// CreateDraftWithReceiptRequest describes the compatibility single-receipt
-// workflow. New callers that may attach more than one receipt should use
-// CreateReportWithReceiptsRequest.
-type CreateDraftWithReceiptRequest struct {
-	Purpose        string
-	Notes          string
-	Receipt        ReceiptInput
-	UploadContract ReceiptUploadContract
-}
-
-// CreateDraftWithReceiptPlan is a credential-free, offline description of the
-// combined draft and receipt mutation.
-type CreateDraftWithReceiptPlan struct {
-	Purpose      string
-	Receipt      ReceiptSummary
-	RequestCount int
-	Actions      []string
-}
-
-// CreateDraftWithReceiptResult contains only non-secret outcome data from the
-// combined workflow.
-type CreateDraftWithReceiptResult struct {
-	Purpose            string
-	ReportNumber       string
-	Status             string
-	ReceiptCountBefore int
-	ReceiptCountAfter  int
-	Attached           AttachedReceipt
-	SavedAndClosed     bool
 }

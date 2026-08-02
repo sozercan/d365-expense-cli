@@ -31,27 +31,6 @@ var errRedirect = errors.New("expense: redirects are not allowed")
 // ErrAuthenticationExpired indicates that Dynamics redirected to sign-in or rejected the captured credentials.
 var ErrAuthenticationExpired = errRedirect
 
-// Plan is a credential-free description of an expense-report creation
-// operation.
-type Plan struct {
-	Purpose      string
-	RequestCount int
-	Actions      []string
-}
-
-// ReportResult contains only non-secret outcome data from creating an expense
-// report.
-type ReportResult struct {
-	Purpose        string
-	ReportNumber   string
-	Status         string
-	SavedAndClosed bool
-	Submitted      bool
-}
-
-// DraftReport is retained as a compatibility alias for callers of CreateDraft.
-type DraftReport = ReportResult
-
 // Option is a sealed Client configuration option.
 type Option interface {
 	apply(*clientOptions) error
@@ -210,57 +189,38 @@ func (client *Client) BootstrapProfile() (*capture.BootstrapProfile, error) {
 	return client.SnapshotBootstrapProfile()
 }
 
-// PlanCreateDraft returns an offline, credential-free operation plan.
-func (client *Client) PlanCreateDraft(purpose string) (Plan, error) {
-	if err := validatePurpose(purpose); err != nil {
-		return Plan{}, err
+// PlanCreateReport returns an offline, credential-free operation plan.
+func (client *Client) PlanCreateReport(request CreateReportRequest) (CreateReportPlan, error) {
+	if err := validatePurpose(request.Purpose); err != nil {
+		return CreateReportPlan{}, err
 	}
-	return Plan{
-		Purpose:      purpose,
+	if err := validateReportFinalAction(request.FinalAction); err != nil {
+		return CreateReportPlan{}, err
+	}
+	finalAction := "save and close draft"
+	if request.FinalAction == ReportFinalActionSubmit {
+		finalAction = "submit the new report using its exact discovered SubmitButton"
+	}
+	return CreateReportPlan{
+		Purpose:      request.Purpose,
 		RequestCount: 3,
 		Actions: []string{
 			"open new expense report",
 			"set purpose and create draft",
-			"save and close draft",
+			finalAction,
 		},
 	}, nil
 }
 
-// PlanCreateAndSubmit returns an offline, credential-free plan for creating a
-// new Draft and then explicitly selecting its discovered SubmitButton.
-func (client *Client) PlanCreateAndSubmit(purpose string) (Plan, error) {
-	if err := validatePurpose(purpose); err != nil {
-		return Plan{}, err
-	}
-	return Plan{
-		Purpose:      purpose,
-		RequestCount: 3,
-		Actions: []string{
-			"open new expense report",
-			"set purpose and create draft",
-			"submit the new report using its exact discovered SubmitButton",
-		},
-	}, nil
-}
-
-// CreateDraft creates an expense report, verifies Draft status, and clicks only
-// the response model's SaveAndClose control.
-func (client *Client) CreateDraft(ctx context.Context, purpose string) (DraftReport, error) {
-	return client.createReport(ctx, purpose, false)
-}
-
-// CreateAndSubmit creates a new Draft and then clicks only the response model's
-// exact, validated SubmitButton. It does not approve, post, recall, or execute
-// generic workflow commands.
-func (client *Client) CreateAndSubmit(ctx context.Context, purpose string) (ReportResult, error) {
-	return client.createReport(ctx, purpose, true)
-}
-
-func (client *Client) createReport(ctx context.Context, purpose string, submit bool) (ReportResult, error) {
+// CreateReport creates a report and performs its explicit final action.
+func (client *Client) CreateReport(ctx context.Context, request CreateReportRequest) (ReportResult, error) {
 	if ctx == nil {
 		return ReportResult{}, errors.New("expense: context is nil")
 	}
-	if err := validatePurpose(purpose); err != nil {
+	if err := validatePurpose(request.Purpose); err != nil {
+		return ReportResult{}, err
+	}
+	if err := validateReportFinalAction(request.FinalAction); err != nil {
 		return ReportResult{}, err
 	}
 
@@ -270,18 +230,18 @@ func (client *Client) createReport(ctx context.Context, purpose string, submit b
 		return ReportResult{}, errors.New("expense: client sequence lacks headroom for report creation")
 	}
 
-	draft, err := client.createDraftDetails(ctx, purpose)
+	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
 		return ReportResult{}, err
 	}
 
-	if submit {
+	if request.FinalAction == ReportFinalActionSubmit {
 		status, err := client.submitOpenDraft(ctx, draft.reportNumber, draft.detailsRootID, draft.submitButton)
 		if err != nil {
 			return ReportResult{}, err
 		}
 		return ReportResult{
-			Purpose:      purpose,
+			Purpose:      request.Purpose,
 			ReportNumber: draft.reportNumber,
 			Status:       status,
 			Submitted:    true,
@@ -297,7 +257,7 @@ func (client *Client) createReport(ctx context.Context, purpose string, submit b
 	}
 
 	return ReportResult{
-		Purpose:        purpose,
+		Purpose:        request.Purpose,
 		ReportNumber:   draft.reportNumber,
 		Status:         draft.status,
 		SavedAndClosed: true,

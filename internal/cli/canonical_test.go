@@ -41,7 +41,7 @@ func TestCanonicalCreateSubmitsByDefault(t *testing.T) {
 	t.Parallel()
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraft = func(args []string, _, _ io.Writer) int {
+	runners.createReport = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}
@@ -59,7 +59,7 @@ func TestCanonicalCreateDefaultSubmitDryRunNeverExecutes(t *testing.T) {
 	t.Parallel()
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraft = func(args []string, _, _ io.Writer) int {
+	runners.createReport = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}
@@ -85,7 +85,7 @@ func TestCanonicalCreateRoutesReceiptsInOrderAndExecutesByDefault(t *testing.T) 
 	}
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraftWithReceipts = func(args []string, _, _ io.Writer) int {
+	runners.createReportWithReceipts = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}
@@ -107,7 +107,7 @@ func TestCanonicalCreateDryRunOmitsExecute(t *testing.T) {
 	t.Parallel()
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraft = func(args []string, _, _ io.Writer) int {
+	runners.createReport = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}
@@ -131,7 +131,7 @@ func TestCanonicalCreateSubmitsReceiptsByDefault(t *testing.T) {
 	}
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraftWithReceipts = func(args []string, _, _ io.Writer) int {
+	runners.createReportWithReceipts = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}

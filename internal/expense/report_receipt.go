@@ -67,33 +67,6 @@ func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithRecei
 	}, nil
 }
 
-// PlanCreateDraftWithReceipt preserves the original single-receipt planning
-// API by adapting it to PlanCreateReportWithReceipts.
-func (client *Client) PlanCreateDraftWithReceipt(request CreateDraftWithReceiptRequest) (CreateDraftWithReceiptPlan, error) {
-	plan, err := client.PlanCreateReportWithReceipts(singleReceiptRequest(request))
-	if err != nil {
-		return CreateDraftWithReceiptPlan{}, err
-	}
-	return CreateDraftWithReceiptPlan{
-		Purpose:      plan.Purpose,
-		Receipt:      plan.Receipts[0].Receipt,
-		RequestCount: createDraftWithReceiptRequestCount,
-		Actions: []string{
-			"open new expense report",
-			"set purpose and create Draft while leaving its details form open",
-			"activate the dynamically discovered Receipts tab",
-			"discover the tab response's New receipt control",
-			"open Add receipts for a Draft-status preflight",
-			"close and reopen Add receipts with fresh upload metadata",
-			"validate receipt name and file",
-			"upload one PNG",
-			"close the upload dialog and confirm the receipt",
-			"verify Draft status and an increased receipt count",
-			"click only SaveAndClose as the final report action",
-		},
-	}, nil
-}
-
 // CreateReportWithReceipts creates a report, attaches every receipt, and
 // performs the request's explicit final action. It does not approve, post,
 // recall, or run generic workflow commands.
@@ -285,36 +258,6 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 	}, nil
 }
 
-// CreateDraftWithReceipt preserves the original single-receipt execution API
-// by adapting it to CreateReportWithReceipts.
-func (client *Client) CreateDraftWithReceipt(ctx context.Context, request CreateDraftWithReceiptRequest) (CreateDraftWithReceiptResult, error) {
-	result, err := client.CreateReportWithReceipts(ctx, singleReceiptRequest(request))
-	if err != nil {
-		return CreateDraftWithReceiptResult{}, err
-	}
-	return CreateDraftWithReceiptResult{
-		Purpose:            result.Purpose,
-		ReportNumber:       result.ReportNumber,
-		Status:             result.Status,
-		ReceiptCountBefore: result.ReceiptCountBefore,
-		ReceiptCountAfter:  result.ReceiptCountAfter,
-		Attached:           result.Receipts[0].Attached,
-		SavedAndClosed:     result.SavedAndClosed,
-	}, nil
-}
-
-func singleReceiptRequest(request CreateDraftWithReceiptRequest) CreateReportWithReceiptsRequest {
-	return CreateReportWithReceiptsRequest{
-		Purpose: request.Purpose,
-		Receipts: []CreateReportReceiptInput{{
-			Notes:   request.Notes,
-			Receipt: request.Receipt,
-		}},
-		UploadContract: request.UploadContract,
-		FinalAction:    ReportFinalActionSaveDraft,
-	}
-}
-
 func validateCreateReportWithReceiptsRequest(request CreateReportWithReceiptsRequest) error {
 	if err := validatePurpose(request.Purpose); err != nil {
 		return err
@@ -325,8 +268,8 @@ func validateCreateReportWithReceiptsRequest(request CreateReportWithReceiptsReq
 	if len(request.Receipts) == 0 {
 		return errors.New("expense: at least one receipt is required")
 	}
-	if request.FinalAction != ReportFinalActionSubmit && request.FinalAction != ReportFinalActionSaveDraft {
-		return errors.New("expense: report final action is invalid")
+	if err := validateReportFinalAction(request.FinalAction); err != nil {
+		return err
 	}
 	for index, receipt := range request.Receipts {
 		if _, err := validateReceiptInput(

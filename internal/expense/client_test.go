@@ -20,7 +20,7 @@ import (
 
 const processMessagesPath = "/Services/ReliableCommunicationManager.svc/ProcessMessages"
 
-func TestCreateDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
+func TestCreateReportSaveDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
 	t.Parallel()
 
 	var requestNumber atomic.Int32
@@ -152,12 +152,13 @@ func TestCreateDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	plan, err := client.PlanCreateDraft("Conference travel")
+	request := expense.CreateReportRequest{Purpose: "Conference travel", FinalAction: expense.ReportFinalActionSaveDraft}
+	plan, err := client.PlanCreateReport(request)
 	if err != nil {
-		t.Fatalf("PlanCreateDraft() error = %v", err)
+		t.Fatalf("PlanCreateReport() error = %v", err)
 	}
 	if plan.Purpose != "Conference travel" || plan.RequestCount != 3 || requestNumber.Load() != 0 {
-		t.Fatalf("PlanCreateDraft() = %#v, requests = %d", plan, requestNumber.Load())
+		t.Fatalf("PlanCreateReport() = %#v, requests = %d", plan, requestNumber.Load())
 	}
 	planText := fmt.Sprintf("%#v", plan)
 	for _, secret := range []string{"unit-header-secret", "unit-cookie-secret", "captured-workspace-root", server.URL} {
@@ -166,12 +167,12 @@ func TestCreateDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
 		}
 	}
 
-	report, err := client.CreateDraft(context.Background(), "Conference travel")
+	report, err := client.CreateReport(context.Background(), request)
 	if err != nil {
-		t.Fatalf("CreateDraft() error = %v", err)
+		t.Fatalf("CreateReport() error = %v", err)
 	}
-	if want := (expense.DraftReport{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); report != want {
-		t.Fatalf("CreateDraft() = %#v, want %#v", report, want)
+	if want := (expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); report != want {
+		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
 	}
 	if requestNumber.Load() != 3 {
 		t.Fatalf("requests = %d, want 3", requestNumber.Load())
@@ -272,7 +273,7 @@ func mustCommands(t *testing.T, message dynamics.Message) []dynamics.CommandInte
 	return commands
 }
 
-func TestNewRejectsSequenceWithoutDraftHeadroom(t *testing.T) {
+func TestNewRejectsSequenceWithoutReportCreationHeadroom(t *testing.T) {
 	profile := validProfile("https://example.test")
 	profile.Session.NextClientSequence = math.MaxInt64 - 2
 	if _, err := expense.New(profile); err == nil || !strings.Contains(err.Error(), "headroom") {
@@ -345,21 +346,22 @@ func TestCreateAndSubmitUsesExactDiscoveredSubmitButton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	plan, err := client.PlanCreateAndSubmit("Conference travel")
+	request := expense.CreateReportRequest{Purpose: "Conference travel", FinalAction: expense.ReportFinalActionSubmit}
+	plan, err := client.PlanCreateReport(request)
 	if err != nil {
-		t.Fatalf("PlanCreateAndSubmit() error = %v", err)
+		t.Fatalf("PlanCreateReport() error = %v", err)
 	}
 	if plan.RequestCount != 3 || !strings.Contains(strings.Join(plan.Actions, " "), "SubmitButton") || requestNumber.Load() != 0 {
-		t.Fatalf("PlanCreateAndSubmit() = %#v, requests=%d", plan, requestNumber.Load())
+		t.Fatalf("PlanCreateReport() = %#v, requests=%d", plan, requestNumber.Load())
 	}
 
-	report, err := client.CreateAndSubmit(context.Background(), "Conference travel")
+	report, err := client.CreateReport(context.Background(), request)
 	if err != nil {
-		t.Fatalf("CreateAndSubmit() error = %v", err)
+		t.Fatalf("CreateReport() error = %v", err)
 	}
 	want := expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-SUBMIT", Status: "2", Submitted: true}
 	if report != want {
-		t.Fatalf("CreateAndSubmit() = %#v, want %#v", report, want)
+		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
 	}
 	if requestNumber.Load() != 3 {
 		t.Fatalf("requests = %d, want 3", requestNumber.Load())
@@ -387,5 +389,29 @@ func submitButtonDescriptor(id string) map[string]any {
 			},
 		},
 		"ChildViewModels": []any{},
+	}
+}
+
+func TestCreateReportRejectsInvalidFinalActionBeforeNetwork(t *testing.T) {
+	t.Parallel()
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := expense.CreateReportRequest{Purpose: "Invalid action"}
+	if _, err := client.PlanCreateReport(request); err == nil || !strings.Contains(err.Error(), "final action") {
+		t.Fatalf("PlanCreateReport() error = %v", err)
+	}
+	if _, err := client.CreateReport(context.Background(), request); err == nil || !strings.Contains(err.Error(), "final action") {
+		t.Fatalf("CreateReport() error = %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("network requests = %d, want 0", requests.Load())
 	}
 }

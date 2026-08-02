@@ -50,7 +50,7 @@ func TestReceiptInputsFromPathsPreserveOrderAndNotes(t *testing.T) {
 	}
 }
 
-func TestCreateDraftWithReceiptsRequiresFilesAndBoundsCount(t *testing.T) {
+func TestLegacyCreateDraftWithReceiptsRequiresFilesAndBoundsCount(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"create-draft-with-receipts", "--session", "work", "--purpose", "event"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("missing files exit code = %d, want 2", code)

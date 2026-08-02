@@ -86,7 +86,8 @@ func TestCreateAndSubmitRequiresVerifiedStatusAndRestoredWorkspace(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := client.CreateAndSubmit(context.Background(), "Unverified submit"); err == nil || !strings.Contains(err.Error(), test.wantError) {
+			request := expense.CreateReportRequest{Purpose: "Unverified submit", FinalAction: expense.ReportFinalActionSubmit}
+			if _, err := client.CreateReport(context.Background(), request); err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v, want %q", err, test.wantError)
 			}
 			if stage != 3 {

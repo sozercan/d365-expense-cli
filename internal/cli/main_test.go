@@ -79,7 +79,7 @@ func TestAttachReceiptRequiresExplicitInputs(t *testing.T) {
 	}
 }
 
-func TestCreateDraftWithReceiptRequiresExplicitInputs(t *testing.T) {
+func TestLegacyCreateDraftWithReceiptRequiresExplicitInputs(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer

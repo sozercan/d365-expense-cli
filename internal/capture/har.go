@@ -447,7 +447,7 @@ func extractSessionProfile(exchanges []exchange) (SessionProfile, error) {
 		return SessionProfile{}, errors.New("HAR contains no successful Dynamics ProcessMessages requests")
 	}
 	if maxClientSequence > math.MaxInt64-4 {
-		return SessionProfile{}, errors.New("captured client sequence lacks headroom for draft creation")
+		return SessionProfile{}, errors.New("captured client sequence lacks headroom for report creation")
 	}
 
 	baseURL, err := baseURLForEndpoint(latest.endpoint)
