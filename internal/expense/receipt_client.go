@@ -62,6 +62,7 @@ type ReceiptClient struct {
 	detailsRootID      string
 	addReceiptButtonID string
 	saveAndCloseID     string
+	submitButton       dynamics.ModelNode
 
 	maxChunkSize               int64
 	maxSupportedSingleFileSize int64
@@ -416,6 +417,12 @@ func (client *ReceiptClient) attachReceiptLocked(ctx context.Context, request At
 			return AttachReceiptResult{}, errors.New("expense: dynamic SaveAndClose control is outside the captured report")
 		}
 		client.saveAndCloseID = okModel.SaveAndClose.ID
+	}
+	if okModel.SubmitButton.ID != "" {
+		if err := dynamics.ValidateSubmitButton(okModel.SubmitButton, client.detailsRootID); err != nil {
+			return AttachReceiptResult{}, fmt.Errorf("expense: dynamic SubmitButton is unsupported: %w", err)
+		}
+		client.submitButton = okModel.SubmitButton
 	}
 	if client.saveAndCloseID == "" {
 		return AttachReceiptResult{}, errors.New("expense: SaveAndClose control is missing")

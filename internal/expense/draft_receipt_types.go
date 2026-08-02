@@ -130,9 +130,10 @@ type CreateDraftReceiptResult struct {
 	ReceiptCountAfter int
 }
 
-// CreateDraftWithReceiptsRequest describes one serialized workflow: create a
-// Draft report, attach one or more PNG receipts while its details form remains
-// open, then save and close it without submitting.
+// CreateDraftWithReceiptsRequest describes the shared inputs for creating a
+// Draft and attaching one or more PNG receipts while its details form remains
+// open. The called method determines whether the final action is SaveAndClose
+// or the exact discovered SubmitButton.
 type CreateDraftWithReceiptsRequest struct {
 	Purpose        string
 	Receipts       []CreateDraftReceiptInput
@@ -158,6 +159,7 @@ type CreateDraftWithReceiptsResult struct {
 	ReceiptCountAfter  int
 	Receipts           []CreateDraftReceiptResult
 	SavedAndClosed     bool
+	Submitted          bool
 }
 
 // CreateDraftWithReceiptRequest describes the compatibility single-receipt
@@ -189,4 +191,5 @@ type CreateDraftWithReceiptResult struct {
 	ReceiptCountAfter  int
 	Attached           AttachedReceipt
 	SavedAndClosed     bool
+	Submitted          bool
 }

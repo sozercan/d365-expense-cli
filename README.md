@@ -1,19 +1,24 @@
 # d365-expense
 
 Create Dynamics 365 Finance expense reports from the command line, attach one
-or more receipts, and save everything as a Draft.
+or more receipts, and explicitly choose whether to save a Draft or submit the
+new report.
 
 > [!IMPORTANT]
-> **Draft-only by design.** `d365-expense` has no submit command and cannot
-> submit, approve, post, or recall an expense report.
+> **Submission is explicit and real.** `create --submit` submits the newly
+> created report after every receipt succeeds. An executing submit requires the
+> additional `--confirm-submit` flag.
 >
-> `create` performs real changes unless you pass `--dry-run`.
+> Always preview with `--dry-run`. The CLI still cannot approve, post, recall,
+> or run arbitrary workflow actions, and it cannot submit an already-closed
+> Draft by report number.
 
 ## What it does
 
 - Creates a new expense report in **Draft** status.
 - Attaches up to 20 PNG receipts in the order provided.
-- Selects **Save and close** only after every receipt succeeds.
+- Selects either **Save and close** or the exact discovered **Submit** action
+  only after every receipt succeeds.
 - Reuses a securely stored authenticated Dynamics session.
 - Stops instead of retrying when the remote result may be uncertain.
 
@@ -22,7 +27,8 @@ or more receipts, and save everything as a Draft.
 You need:
 
 1. Access to the Dynamics 365 Finance **Expense management** workspace.
-2. Permission to create expense-report Drafts.
+2. Permission to create expense-report Drafts and, when using `--submit`, to
+   submit them.
 3. A current authenticated session, acquired from either:
    - a private browser HAR; or
    - a dedicated local Microsoft Edge session through CDP.
@@ -61,7 +67,7 @@ If you are working from a source checkout, see
 1. Acquire current Dynamics authentication from a HAR or local Edge session.
 2. Store it under a short session name such as `work`.
 3. Preview the expense with `--dry-run`.
-4. Create one unsubmitted Draft and attach the receipts.
+4. Create one report, attach the receipts, and choose `--draft` or `--submit`.
 
 ## Quick start
 
@@ -151,6 +157,10 @@ Confirm these fields:
 - the expected receipt count
 - `saved-and-closed=true`
 
+To submit instead, preview and execute a **new** report with the submission
+recipe below. Submission is a creation-time outcome; this CLI does not reopen
+and submit the Draft created in this quick start.
+
 ## Common recipes
 
 ### Create a Draft without receipts
@@ -177,6 +187,38 @@ d365-expense create \
 ```
 
 `--receipt-note` applies the same note to every receipt in the command.
+
+### Create and submit a report
+
+Preview first. A submit dry run sends no network requests and does not need the
+confirmation flag:
+
+```bash
+d365-expense create \
+  --submit \
+  --session work \
+  --purpose "Customer visit" \
+  --receipt flight.png \
+  --receipt hotel.png \
+  --dry-run
+```
+
+After reviewing the plan, execute with the additional confirmation:
+
+```bash
+d365-expense create \
+  --submit \
+  --confirm-submit \
+  --session work \
+  --purpose "Customer visit" \
+  --receipt flight.png \
+  --receipt hotel.png
+```
+
+The CLI admits only the exact `SubmitButton` exposed by the new report's
+details form. It reports success only when the response identifies the same
+report and shows that it is no longer Draft. Otherwise the operation fails and
+a named session becomes `uncertain`; inspect Dynamics and do not retry.
 
 ### Use a HAR directly
 
@@ -216,7 +258,7 @@ Every receipt must be:
 - no larger than 1,024,000 bytes; and
 - owner-only on Unix-like systems, normally mode `0600`.
 
-A single Draft can include up to 20 receipts. Receipts are attached at report
+A single report can include up to 20 receipts. Receipts are attached at report
 level; the CLI does not match them to individual expense lines.
 
 ## Session status
@@ -241,8 +283,12 @@ authentication afterward.
 
 ## Troubleshooting
 
-- **`--draft is required`** — add `--draft`; it is the explicit Draft-only
-  safety acknowledgement.
+- **`exactly one of --draft or --submit is required`** — choose the intended
+  final action explicitly.
+- **`executing --submit requires --confirm-submit`** — preview without the
+  confirmation, then add it only to the reviewed execution command.
+- **Submit result cannot be verified** — the report may have changed remotely;
+  do not retry. Inspect Dynamics and replace an `uncertain` named session.
 - **Session is `expired`** — sign in again and re-import from HAR or CDP.
 - **Session is `uncertain`** — check Dynamics for partial work, then replace
   the session.

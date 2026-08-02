@@ -1,6 +1,7 @@
 // Package dynamics implements the small, observed subset of the Dynamics 365
 // Finance ReliableCommunicationManager JSON protocol needed to create an
-// unsubmitted expense-report draft.
+// expense-report Draft, attach receipts, and explicitly select the new report's
+// exact Submit action.
 //
 // The protocol is an internal Dynamics web-client protocol, not a supported
 // public API. The types in this package deliberately retain unknown JSON fields
@@ -28,6 +29,7 @@ const (
 
 	SelectedControlNewExpenseReportReportsTab = "NewExpenseReportReportsTab"
 
+	FormExpenseWorkspace        = "ExpenseWorkspace_form"
 	FormExpenseNewExpenseReport = "ExpenseNewExpenseReport_form"
 	FormExpenseReportDetails    = "ExpenseReportDetails_form"
 

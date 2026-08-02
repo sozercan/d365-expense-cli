@@ -39,7 +39,7 @@ func runLegacy(args []string, stdout, stderr io.Writer) int {
 	case "attach-receipt":
 		return runAttachReceipt(args[1:], stdout, stderr)
 	case "submit":
-		fmt.Fprintln(stderr, "submit is intentionally unsupported; this client creates Draft reports only")
+		fmt.Fprintln(stderr, "submit is a create outcome, not a standalone command; use d365-expense create --submit")
 		return 2
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
@@ -83,6 +83,8 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	harPath := flags.String("har", "", "path to a private raw HAR capture")
 	sessionName := flags.String("session", "", "named imported standalone session")
 	purpose := flags.String("purpose", "", "expense report title/purpose")
+	submit := flags.Bool("submit", false, "submit the newly created report instead of saving it as a Draft")
+	confirmSubmit := flags.Bool("confirm-submit", false, "confirm an executing submit operation")
 	execute := flags.Bool("execute", false, "send the three allowlisted draft-creation requests")
 	timeout := flags.Duration("timeout", 45*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
@@ -104,6 +106,18 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "create-draft requires a positive --timeout")
 		return 2
 	}
+	if *confirmSubmit && !*submit {
+		fmt.Fprintln(stderr, "create-draft: --confirm-submit requires --submit")
+		return 2
+	}
+	if *submit && *execute && !*confirmSubmit {
+		fmt.Fprintln(stderr, "create-draft: executing --submit requires --confirm-submit")
+		return 2
+	}
+	if *submit && !*execute && *confirmSubmit {
+		fmt.Fprintln(stderr, "create-draft: --confirm-submit is only valid with --execute")
+		return 2
+	}
 
 	profile, err := loadBootstrapForRead(*harPath, *sessionName)
 	if err != nil {
@@ -115,7 +129,12 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
 		return 1
 	}
-	plan, err := client.PlanCreateDraft(*purpose)
+	var plan expense.Plan
+	if *submit {
+		plan, err = client.PlanCreateAndSubmit(*purpose)
+	} else {
+		plan, err = client.PlanCreateDraft(*purpose)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
 		return 1
@@ -128,7 +147,11 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		for _, action := range plan.Actions {
 			fmt.Fprintf(stdout, "- %s\n", action)
 		}
-		fmt.Fprintln(stdout, "rerun with --execute to create and save the Draft report")
+		if *submit {
+			fmt.Fprintln(stdout, "rerun with --execute --confirm-submit to create and submit the report")
+		} else {
+			fmt.Fprintln(stdout, "rerun with --execute to create and save the Draft report")
+		}
 		return 0
 	}
 
@@ -144,7 +167,13 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	report, operationErr := client.CreateDraft(ctx, *purpose)
+	var report expense.ReportResult
+	var operationErr error
+	if *submit {
+		report, operationErr = client.CreateAndSubmit(ctx, *purpose)
+	} else {
+		report, operationErr = client.CreateDraft(ctx, *purpose)
+	}
 	var checkpointErr error
 	if execution != nil {
 		checkpointErr = execution.finish(operationErr)
@@ -156,10 +185,15 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "created draft %s: purpose=%q status=%s saved-and-closed=%t\n",
-		report.ReportNumber, report.Purpose, report.Status, report.SavedAndClosed)
+	if report.Submitted {
+		fmt.Fprintf(stdout, "created and submitted report %s: purpose=%q status=%s submitted=true\n",
+			report.ReportNumber, report.Purpose, report.Status)
+	} else {
+		fmt.Fprintf(stdout, "created draft %s: purpose=%q status=%s saved-and-closed=%t\n",
+			report.ReportNumber, report.Purpose, report.Status, report.SavedAndClosed)
+	}
 	if checkpointErr != nil {
-		fmt.Fprintf(stderr, "create-draft: draft was created, but session checkpoint failed; do not retry this expense operation: %v\n", checkpointErr)
+		fmt.Fprintf(stderr, "create-draft: report operation succeeded, but session checkpoint failed; do not retry this expense operation: %v\n", checkpointErr)
 		return 1
 	}
 	return 0
@@ -259,7 +293,7 @@ func requirePrivateCapture(path string) error {
 }
 
 func printLegacyUsage(w io.Writer) {
-	fmt.Fprintln(w, "msexpense: create unsubmitted Dynamics 365 expense drafts from an imported browser session")
+	fmt.Fprintln(w, "msexpense: create Dynamics 365 expense reports from an imported browser session")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  msexpense session import --name <name> <workspace.har>")
@@ -274,5 +308,5 @@ func printLegacyUsage(w io.Writer) {
 	fmt.Fprintln(w, "  msexpense attach-receipt --har <receipt.har> --report <number> --file <receipt.png> [--execute]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Create and attach commands are dry runs unless --execute is supplied.")
-	fmt.Fprintln(w, "Imported sessions are browser-free but expire when Dynamics revokes their credentials. There is no submit command.")
+	fmt.Fprintln(w, "Imported sessions are browser-free but expire when Dynamics revokes their credentials. Use canonical d365-expense create --submit for explicit submission.")
 }

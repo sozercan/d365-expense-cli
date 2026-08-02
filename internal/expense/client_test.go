@@ -279,3 +279,113 @@ func TestNewRejectsSequenceWithoutDraftHeadroom(t *testing.T) {
 		t.Fatalf("New() error = %v, want sequence headroom error", err)
 	}
 }
+
+func TestCreateAndSubmitUsesExactDiscoveredSubmitButton(t *testing.T) {
+	t.Parallel()
+
+	var requestNumber atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request dynamics.Envelope
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		last := request.Messages[len(request.Messages)-1].SequenceNumber
+		w.Header().Set("Content-Type", "application/json")
+		switch requestNumber.Add(1) {
+		case 1:
+			writeEnvelope(t, w, responseEnvelope(7, last, 51,
+				viewModelInteraction(map[string]any{
+					"Id": "submit-dialog", "Name": dynamics.FormExpenseNewExpenseReport, "TypeName": "Dialog",
+					"ChildViewModels": []any{map[string]any{"Id": "submit-purpose", "Name": dynamics.ControlNamePurpose, "TypeName": "Input"}},
+				}),
+			))
+		case 2:
+			writeEnvelope(t, w, responseEnvelope(7, last, 52,
+				viewModelInteraction(map[string]any{
+					"Id": "submit-details", "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
+					"ChildModelCollections": map[string]any{"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{
+						"Id": "submit-record", "Properties": map[string]any{"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-SUBMIT", "expenseReportStatus_dataMethod": "Draft"},
+					}}}}},
+					"ChildViewModels": []any{
+						map[string]any{"Id": "submit-save", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"},
+						submitButtonDescriptor("submit-target"),
+					},
+				}),
+			))
+		case 3:
+			commands := mustCommands(t, request.Messages[0])
+			if len(commands) != 1 {
+				t.Errorf("submit commands = %#v", commands)
+				break
+			}
+			command := commands[0]
+			if command.CommandName != dynamics.CommandClick || command.RootID != "submit-details" || command.TargetID != "submit-target" || command.PositionalParameters != nil {
+				t.Errorf("submit command = %#v", command)
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, 53,
+				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "workspace", "Descriptor": map[string]any{
+					"Id": "submitted-record", "Properties": map[string]any{"ExpNumber_field": "ER-SUBMIT", "ApprovalStatus_field": "2"},
+				}}),
+				viewModelInteraction(map[string]any{
+					"Id": "workspace-after-submit", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{
+						"Id": "new-report-after-submit", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
+					}},
+				}),
+			))
+		default:
+			t.Errorf("unexpected request %d", requestNumber.Load())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	plan, err := client.PlanCreateAndSubmit("Conference travel")
+	if err != nil {
+		t.Fatalf("PlanCreateAndSubmit() error = %v", err)
+	}
+	if plan.RequestCount != 3 || !strings.Contains(strings.Join(plan.Actions, " "), "SubmitButton") || requestNumber.Load() != 0 {
+		t.Fatalf("PlanCreateAndSubmit() = %#v, requests=%d", plan, requestNumber.Load())
+	}
+
+	report, err := client.CreateAndSubmit(context.Background(), "Conference travel")
+	if err != nil {
+		t.Fatalf("CreateAndSubmit() error = %v", err)
+	}
+	want := expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-SUBMIT", Status: "2", Submitted: true}
+	if report != want {
+		t.Fatalf("CreateAndSubmit() = %#v, want %#v", report, want)
+	}
+	if requestNumber.Load() != 3 {
+		t.Fatalf("requests = %d, want 3", requestNumber.Load())
+	}
+}
+
+func submitButtonDescriptor(id string) map[string]any {
+	return map[string]any{
+		"Id": id, "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		"ValueProperties": map[string]any{
+			"Label": "Submit", "MenuItemType": "Action", "MenuItemName": dynamics.MenuItemSubmit,
+			"PrimaryModelName": "TrvExpTable_ds", "ServiceBoundary": "TrvExpTable",
+		},
+		"SerializedValueProperties": map[string]any{
+			"SaveRecord": "true", "Visible": "true", "Enabled": "true",
+		},
+		"Commands": map[string]any{
+			"Click": map[string]any{
+				"CommandName": "Click",
+				"Properties": map[string]any{
+					"ThrottleGroup": "TG", "Telemetry": "true", "ExecuteImmediate": true, "ShouldBlockOnExecution": true,
+				},
+				"ParameterBindings": map[string]any{},
+				"ValueTypeName":     "Navigate",
+			},
+		},
+		"ChildViewModels": []any{},
+	}
+}

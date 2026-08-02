@@ -23,6 +23,7 @@ import (
 
 type multiReceiptServerOptions struct {
 	receiptCount        int
+	submit              bool
 	failReceiptIndex    int
 	failedReceiptStatus string
 	failedReceiptCount  int
@@ -40,6 +41,7 @@ type multiReceiptObservation struct {
 	requestCount  int
 	activateCount int
 	saveCount     int
+	submitCount   int
 	commands      []string
 	openButtons   []string
 	uploads       []observedMultiUpload
@@ -160,6 +162,51 @@ func TestCreateDraftWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *te
 		if strings.Contains(strings.ToLower(command), "submit") {
 			t.Fatalf("forbidden command emitted: %s", command)
 		}
+	}
+}
+
+func TestCreateAndSubmitWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *testing.T) {
+	file := []byte("\x89PNG\r\n\x1a\nsubmit-receipt")
+	server, observed := newMultiReceiptWorkflowServer(t, multiReceiptServerOptions{receiptCount: 1, submit: true}, [][]byte{file})
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := expense.ReceiptUploadContractFromProfile(&capture.ReceiptProfile{Upload: validReceiptProfile("https://unused.invalid").Upload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := expense.CreateDraftWithReceiptsRequest{
+		Purpose:        "Submit with receipt",
+		UploadContract: contract,
+		Receipts: []expense.CreateDraftReceiptInput{{
+			Notes: "travel",
+			Receipt: expense.ReceiptInput{
+				Filename: "submit.png", MediaType: "image/png", Size: int64(len(file)),
+				Open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(file)), nil },
+			},
+		}},
+	}
+
+	plan, err := client.PlanCreateAndSubmitWithReceipts(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.RequestCount != 12 || !strings.Contains(strings.Join(plan.Actions, " "), "SubmitButton") || observed.requestCount != 0 {
+		t.Fatalf("plan=%#v requests=%d", plan, observed.requestCount)
+	}
+
+	result, err := client.CreateAndSubmitWithReceipts(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Submitted || result.SavedAndClosed || result.Status != "2" || result.ReceiptCountAfter != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if observed.submitCount != 1 || observed.saveCount != 0 || observed.requestCount != 12 {
+		t.Fatalf("requests=%d submit=%d save=%d", observed.requestCount, observed.submitCount, observed.saveCount)
 	}
 }
 
@@ -408,6 +455,14 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 				}),
 			))
 		case 2:
+			children := []any{
+				map[string]any{"Id": "new-count", "Name": dynamics.ControlReceiptCount, "TypeName": "Integer", "ValueProperties": map[string]any{"Value": "0"}},
+				map[string]any{"Id": "save-created", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"},
+				map[string]any{"Id": "new-receipts-tab", "Name": dynamics.ControlReceiptsTabPage, "TypeName": "PivotItem"},
+			}
+			if options.submit {
+				children = append(children, submitButtonDescriptor("submit-created"))
+			}
 			writeEnvelope(t, w, responseEnvelope(7, last, serverSequence,
 				viewModelInteraction(map[string]any{
 					"Id": "new-details", "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
@@ -418,11 +473,7 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 							"expenseReportStatus_dataMethod": "Draft",
 						}}}},
 					}},
-					"ChildViewModels": []any{
-						map[string]any{"Id": "new-count", "Name": dynamics.ControlReceiptCount, "TypeName": "Integer", "ValueProperties": map[string]any{"Value": "0"}},
-						map[string]any{"Id": "save-created", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"},
-						map[string]any{"Id": "new-receipts-tab", "Name": dynamics.ControlReceiptsTabPage, "TypeName": "PivotItem"},
-					},
+					"ChildViewModels": children,
 				}),
 			))
 		case 3:
@@ -448,12 +499,25 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 			if stage != finalStage {
 				t.Fatalf("unexpected stage %d", stage)
 			}
-			assertSingleClick(t, envelope, "new-details", fmt.Sprintf("save-after-%d", options.receiptCount))
-			observed.saveCount++
+			if options.submit {
+				assertSingleClick(t, envelope, "new-details", fmt.Sprintf("submit-after-%d", options.receiptCount))
+				observed.submitCount++
+			} else {
+				assertSingleClick(t, envelope, "new-details", fmt.Sprintf("save-after-%d", options.receiptCount))
+				observed.saveCount++
+			}
+			properties := map[string]any{"ExpNumber_field": combinedReportNumber}
+			if options.submit {
+				properties["ApprovalStatus_field"] = "2"
+			}
 			writeEnvelope(t, w, responseEnvelope(7, last, serverSequence,
-				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "workspace", "Descriptor": map[string]any{"Id": "saved-row", "Properties": map[string]any{
-					"ExpNumber_field": combinedReportNumber,
-				}}}),
+				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "workspace", "Descriptor": map[string]any{"Id": "saved-row", "Properties": properties}}),
+				viewModelInteraction(map[string]any{
+					"Id": "workspace-after-final-action", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{
+						"Id": "new-report-after-final-action", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
+					}},
+				}),
 			))
 		}
 	}))
@@ -557,6 +621,9 @@ func handleMultiReceiptStage(
 			}}}),
 			receiptViewModel("new-details", map[string]any{"Id": fmt.Sprintf("new-receipt-%d", suffix+1), "Name": dynamics.ControlNewReceiptButton, "TypeName": "MenuItemButton"}),
 			receiptViewModel("new-details", map[string]any{"Id": fmt.Sprintf("save-after-%d", suffix), "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"}),
+		}
+		if options.submit {
+			interactions = append(interactions, receiptViewModel("new-details", submitButtonDescriptor(fmt.Sprintf("submit-after-%d", suffix))))
 		}
 		if includeCount {
 			interactions = append([]json.RawMessage{

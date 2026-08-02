@@ -24,6 +24,16 @@ const (
 // of the combined draft and ordered multi-receipt workflow. It does not open
 // any receipt readers.
 func (client *Client) PlanCreateDraftWithReceipts(request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsPlan, error) {
+	return client.planCreateDraftWithReceipts(request, false)
+}
+
+// PlanCreateAndSubmitWithReceipts returns an offline plan for creating a new
+// Draft, attaching every receipt, and then explicitly submitting the report.
+func (client *Client) PlanCreateAndSubmitWithReceipts(request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsPlan, error) {
+	return client.planCreateDraftWithReceipts(request, true)
+}
+
+func (client *Client) planCreateDraftWithReceipts(request CreateDraftWithReceiptsRequest, submit bool) (CreateDraftWithReceiptsPlan, error) {
 	if client == nil {
 		return CreateDraftWithReceiptsPlan{}, errors.New("expense: client is nil")
 	}
@@ -45,6 +55,10 @@ func (client *Client) PlanCreateDraftWithReceipts(request CreateDraftWithReceipt
 			},
 		}
 	}
+	finalAction := "after all receipts succeed, click only SaveAndClose as the final report action"
+	if submit {
+		finalAction = "after all receipts succeed, submit using only the exact discovered SubmitButton"
+	}
 	return CreateDraftWithReceiptsPlan{
 		Purpose:      request.Purpose,
 		Receipts:     receipts,
@@ -58,7 +72,7 @@ func (client *Client) PlanCreateDraftWithReceipts(request CreateDraftWithReceipt
 			"for each receipt, perform a Draft-status preflight and use fresh upload metadata",
 			"for each receipt, validate and upload one PNG",
 			"after each receipt, verify Draft status and the cumulative receipt count",
-			"after all receipts succeed, click only SaveAndClose as the final report action",
+			finalAction,
 		},
 	}, nil
 }
@@ -93,9 +107,21 @@ func (client *Client) PlanCreateDraftWithReceipt(request CreateDraftWithReceiptR
 // CreateDraftWithReceipts creates a new Draft, activates its Receipts tab once,
 // attaches one or more PNG receipts sequentially in one fresh session, verifies
 // Draft status and the cumulative count after each attachment, and clicks
-// SaveAndClose only after every receipt succeeds. It never emits a submit
-// command and performs no retry or compensating action.
+// SaveAndClose only after every receipt succeeds. It performs no retry or
+// compensating action.
 func (client *Client) CreateDraftWithReceipts(ctx context.Context, request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsResult, error) {
+	return client.createDraftWithReceipts(ctx, request, false)
+}
+
+// CreateAndSubmitWithReceipts creates a new Draft, attaches every receipt, and
+// then explicitly submits the report using only its exact discovered
+// SubmitButton. It does not approve, post, recall, or run generic workflow
+// commands.
+func (client *Client) CreateAndSubmitWithReceipts(ctx context.Context, request CreateDraftWithReceiptsRequest) (CreateDraftWithReceiptsResult, error) {
+	return client.createDraftWithReceipts(ctx, request, true)
+}
+
+func (client *Client) createDraftWithReceipts(ctx context.Context, request CreateDraftWithReceiptsRequest, submit bool) (CreateDraftWithReceiptsResult, error) {
 	if client == nil {
 		return CreateDraftWithReceiptsResult{}, errors.New("expense: client is nil")
 	}
@@ -119,6 +145,11 @@ func (client *Client) CreateDraftWithReceipts(ctx context.Context, request Creat
 	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
 		return CreateDraftWithReceiptsResult{}, err
+	}
+	if submit {
+		if err := dynamics.ValidateSubmitButton(draft.submitButton, draft.detailsRootID); err != nil {
+			return CreateDraftWithReceiptsResult{}, fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)
+		}
 	}
 	createdReceiptModel, err := dynamics.DiscoverReceiptModel(draft.responseBody)
 	if err != nil {
@@ -181,6 +212,13 @@ func (client *Client) CreateDraftWithReceipts(ctx context.Context, request Creat
 		}
 		saveAndCloseID = activatedModel.SaveAndClose.ID
 	}
+	submitButton := draft.submitButton
+	if activatedModel.SubmitButton.ID != "" {
+		if err := dynamics.ValidateSubmitButton(activatedModel.SubmitButton, draft.detailsRootID); err != nil {
+			return CreateDraftWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
+		}
+		submitButton = activatedModel.SubmitButton
+	}
 
 	uploadEndpoint, err := receiptUploadEndpoint(client.origin, request.UploadContract)
 	if err != nil {
@@ -202,6 +240,7 @@ func (client *Client) CreateDraftWithReceipts(ctx context.Context, request Creat
 		detailsRootID:              draft.detailsRootID,
 		addReceiptButtonID:         activatedModel.AddReceiptButton.ID,
 		saveAndCloseID:             saveAndCloseID,
+		submitButton:               submitButton,
 		maxChunkSize:               request.UploadContract.maxChunkSize,
 		maxSupportedSingleFileSize: request.UploadContract.maxSupportedSingleFileSize,
 		documentType:               request.UploadContract.documentType,
@@ -239,20 +278,34 @@ func (client *Client) CreateDraftWithReceipts(ctx context.Context, request Creat
 		})
 	}
 
-	if err := receiptClient.saveAndClose(ctx); err != nil {
+	status := "Draft"
+	savedAndClosed := false
+	submitted := false
+	if submit {
 		client.syncReceiptSession(receiptClient)
-		return CreateDraftWithReceiptsResult{}, err
+		status, err = client.submitOpenDraft(ctx, draft.reportNumber, draft.detailsRootID, receiptClient.submitButton)
+		if err != nil {
+			return CreateDraftWithReceiptsResult{}, err
+		}
+		submitted = true
+	} else {
+		if err := receiptClient.saveAndClose(ctx); err != nil {
+			client.syncReceiptSession(receiptClient)
+			return CreateDraftWithReceiptsResult{}, err
+		}
+		client.syncReceiptSession(receiptClient)
+		savedAndClosed = true
 	}
-	client.syncReceiptSession(receiptClient)
 
 	return CreateDraftWithReceiptsResult{
 		Purpose:            request.Purpose,
 		ReportNumber:       draft.reportNumber,
-		Status:             "Draft",
+		Status:             status,
 		ReceiptCountBefore: beforeReceiptCount,
 		ReceiptCountAfter:  beforeReceiptCount + len(request.Receipts),
 		Receipts:           attachedReceipts,
-		SavedAndClosed:     true,
+		SavedAndClosed:     savedAndClosed,
+		Submitted:          submitted,
 	}, nil
 }
 
@@ -271,6 +324,7 @@ func (client *Client) CreateDraftWithReceipt(ctx context.Context, request Create
 		ReceiptCountAfter:  result.ReceiptCountAfter,
 		Attached:           result.Receipts[0].Attached,
 		SavedAndClosed:     result.SavedAndClosed,
+		Submitted:          result.Submitted,
 	}, nil
 }
 

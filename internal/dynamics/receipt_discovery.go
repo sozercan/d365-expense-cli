@@ -17,6 +17,7 @@ type ReceiptModel struct {
 	AddReceiptButton     ModelNode
 	ReceiptsTabPage      ModelNode
 	SaveAndClose         ModelNode
+	SubmitButton         ModelNode
 	AccessToken          string
 	CurrentRecID         string
 	CurrentDocuRefRecID  string
@@ -57,6 +58,7 @@ func receiptModelFromResponse(response ResponseModel) ReceiptModel {
 	model.AddReceiptButton = firstControl(response, ControlNewReceiptButton, ControlAddReceipts)
 	model.ReceiptsTabPage, _ = response.FindControl(ControlReceiptsTabPage)
 	model.SaveAndClose, _ = response.FindControl(ControlSaveAndClose)
+	model.SubmitButton, _ = response.FindControl(ControlSubmitButton)
 
 	model.AccessToken = nodeScalar(model.UploadControl, "AccessToken")
 	model.CurrentRecID = nodeScalar(model.UploadControl, "CurrentRecId")
@@ -86,7 +88,7 @@ func receiptModelFromResponse(response ResponseModel) ReceiptModel {
 		}
 	}
 	if hasDetailsForm || model.AddReceiptButton.RootID != "" || model.ReceiptsTabPage.RootID != "" ||
-		model.SaveAndClose.RootID != "" || (hasReceiptCount && receiptCount.RootID != "") {
+		model.SaveAndClose.RootID != "" || model.SubmitButton.RootID != "" || (hasReceiptCount && receiptCount.RootID != "") {
 		// Status is report-local only when the response carries the details form
 		// or one of its receipt controls. Stage-local upload responses can include
 		// stale status properties from a previously closed report.
@@ -155,6 +157,7 @@ func MergeReceiptModels(models ...ReceiptModel) ReceiptModel {
 		mergeNode(&merged.AddReceiptButton, model.AddReceiptButton)
 		mergeNode(&merged.ReceiptsTabPage, model.ReceiptsTabPage)
 		mergeNode(&merged.SaveAndClose, model.SaveAndClose)
+		mergeNode(&merged.SubmitButton, model.SubmitButton)
 		for destination, source := range map[*string]string{
 			&merged.AccessToken: model.AccessToken, &merged.CurrentRecID: model.CurrentRecID,
 			&merged.CurrentDocuRefRecID: model.CurrentDocuRefRecID, &merged.CurrentTableID: model.CurrentTableID,
@@ -175,7 +178,7 @@ func MergeReceiptModels(models ...ReceiptModel) ReceiptModel {
 
 // CommandTargets returns the allowlist IDs represented by this discovery.
 func (model ReceiptModel) CommandTargets() ReceiptCommandTargets {
-	detailsRootID := firstNonEmpty(model.AddReceiptButton.RootID, model.ReceiptsTabPage.RootID, model.SaveAndClose.RootID)
+	detailsRootID := firstNonEmpty(model.AddReceiptButton.RootID, model.ReceiptsTabPage.RootID, model.SaveAndClose.RootID, model.SubmitButton.RootID)
 	dialogRootID := firstNonEmpty(model.AddNewReceiptForm.ID, model.UploadControl.RootID, model.OKButton.RootID)
 	return ReceiptCommandTargets{
 		DetailsRootID:      detailsRootID,
@@ -200,10 +203,10 @@ func firstNonEmpty(values ...string) string {
 // SafeSummary reports discovery completeness without including AccessToken.
 func (model ReceiptModel) SafeSummary() string {
 	return fmt.Sprintf(
-		"receipt model: report=%q status=%q receipt-count=%d receipt-count-present=%t form=%t upload=%t ok=%t close=%t add=%t tab=%t save=%t access-token-present=%t",
+		"receipt model: report=%q status=%q receipt-count=%d receipt-count-present=%t form=%t upload=%t ok=%t close=%t add=%t tab=%t save=%t submit=%t access-token-present=%t",
 		model.ReportNumber, model.Status, model.ReceiptCount, model.ReceiptCountPresent,
 		model.AddNewReceiptForm.ID != "", model.UploadControl.ID != "", model.OKButton.ID != "", model.CloseButton.ID != "",
-		model.AddReceiptButton.ID != "", model.ReceiptsTabPage.ID != "", model.SaveAndClose.ID != "",
+		model.AddReceiptButton.ID != "", model.ReceiptsTabPage.ID != "", model.SaveAndClose.ID != "", model.SubmitButton.ID != "",
 		model.AccessToken != "",
 	)
 }

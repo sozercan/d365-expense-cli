@@ -9,15 +9,16 @@ import (
 	"testing"
 )
 
-func TestHelpAndSubmitBoundary(t *testing.T) {
+func TestHelpAndSubmitMode(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"help"}, &stdout, &stderr); code != 0 {
+	if code := run([]string{"create", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("help exit code = %d", code)
 	}
-	if !strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), "no submit") {
-		t.Fatalf("help did not describe submit boundary: %s", stdout.String())
+	if !strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), "--submit") ||
+		!strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), "--confirm-submit") {
+		t.Fatalf("help did not describe submit mode: %s", stdout.String())
 	}
 
 	stdout.Reset()
@@ -25,7 +26,7 @@ func TestHelpAndSubmitBoundary(t *testing.T) {
 	if code := run([]string{"submit"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("submit exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "intentionally unsupported") {
+	if !strings.Contains(stderr.String(), "create --submit") {
 		t.Fatalf("submit rejection = %s", stderr.String())
 	}
 }
@@ -127,5 +128,21 @@ func TestSessionCommandsRequireExplicitNames(t *testing.T) {
 		if strings.TrimSpace(stderr.String()) == "" {
 			t.Fatalf("run(%v) stderr = %q", args, stderr.String())
 		}
+	}
+}
+
+func TestLegacyCreateSubmitRequiresExplicitConfirmationBeforeSessionAccess(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"create-draft", "--session", "does-not-exist", "--purpose", "event",
+		"--submit", "--execute",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "requires --confirm-submit") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

@@ -20,7 +20,7 @@ type canonicalCLI struct {
 	NoColor   bool             `name:"no-color" env:"NO_COLOR" help:"Disable colored output."`
 	Version   kong.VersionFlag `name:"version" help:"Print version and exit."`
 
-	Create     createCommand  `cmd:"" help:"Create and save an unsubmitted expense report."`
+	Create     createCommand  `cmd:"" help:"Create an expense report and explicitly save it as a Draft or submit it."`
 	Receipt    receiptCommand `cmd:"" help:"Manage receipts on existing Draft reports."`
 	Session    sessionCommand `cmd:"" help:"Manage imported Dynamics sessions."`
 	HAR        harCommand     `cmd:"" name:"har" help:"Inspect or capture private HAR files."`
@@ -41,7 +41,9 @@ func (source profileSource) validate() error {
 
 type createCommand struct {
 	profileSource      `embed:""`
-	Draft              bool     `name:"draft" required:"" help:"Required safety acknowledgement: create a Draft and never submit it."`
+	Draft              bool     `name:"draft" help:"Save and close the new report as a Draft."`
+	Submit             bool     `name:"submit" help:"Submit the new report after every receipt succeeds."`
+	ConfirmSubmit      bool     `name:"confirm-submit" help:"Required when executing a --submit operation."`
 	Purpose            string   `name:"purpose" required:"" help:"Expense report purpose/title."`
 	Receipts           []string `name:"receipt" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in attachment order."`
 	ReceiptNote        string   `name:"receipt-note" help:"Notes applied to every receipt."`
@@ -50,8 +52,17 @@ type createCommand struct {
 }
 
 func (command *createCommand) Validate() error {
-	if !command.Draft {
-		return errors.New("--draft is required")
+	if command.Draft == command.Submit {
+		return errors.New("exactly one of --draft or --submit is required")
+	}
+	if command.ConfirmSubmit && !command.Submit {
+		return errors.New("--confirm-submit requires --submit")
+	}
+	if command.Submit && command.DryRun && command.ConfirmSubmit {
+		return errors.New("--confirm-submit cannot be used with --dry-run")
+	}
+	if command.Submit && !command.DryRun && !command.ConfirmSubmit {
+		return errors.New("executing --submit requires --confirm-submit")
 	}
 	if err := command.profileSource.validate(); err != nil {
 		return err
@@ -216,6 +227,12 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	}
 	args := sourceArgs(command.profileSource)
 	args = append(args, "--purpose", command.Purpose)
+	if command.Submit {
+		args = append(args, "--submit")
+		if command.ConfirmSubmit {
+			args = append(args, "--confirm-submit")
+		}
+	}
 	if len(command.Receipts) == 0 {
 		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second).String())
 		if !command.DryRun {
@@ -325,7 +342,7 @@ func runCanonicalWithRunners(args []string, stdout, stderr io.Writer, runners le
 	model := &canonicalCLI{}
 	parser, err := kong.New(model,
 		kong.Name("d365-expense"),
-		kong.Description("Create and manage unsubmitted Dynamics 365 expense Drafts. There is no submit command."),
+		kong.Description("Create Dynamics 365 expense reports, attach receipts, and explicitly choose Draft or Submit."),
 		kong.Vars{"version": version},
 		kong.Writers(stdout, stderr),
 		kong.Exit(func(code int) { panic(kongExitSignal{code: code}) }),

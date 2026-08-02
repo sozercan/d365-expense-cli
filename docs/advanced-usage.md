@@ -15,6 +15,19 @@ d365-expense create \
 Treat the HAR as one-shot after a network operation begins. The CLI cannot
 checkpoint updated sequence state back into the HAR.
 
+Direct-HAR submission uses the same explicit gates:
+
+```bash
+d365-expense create \
+  --submit \
+  --confirm-submit \
+  --har workspace.har \
+  --purpose "Travel"
+```
+
+Prefer a named session so an unverified result can be persisted as
+`uncertain`. Never reuse the HAR or retry the submission after execution begins.
+
 ## Attach a receipt to an existing captured Draft
 
 This report-specific compatibility flow requires a receipt-capable HAR:
@@ -29,6 +42,7 @@ d365-expense receipt attach \
 ```
 
 Remove `--dry-run` only after verifying the plan.
+Receipt attachment never submits the existing Draft.
 
 ## Inspect a HAR
 

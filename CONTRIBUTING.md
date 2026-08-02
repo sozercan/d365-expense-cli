@@ -3,8 +3,8 @@
 Thank you for helping improve `d365-expense-cli`.
 
 This project interacts with an unsupported, stateful Dynamics 365 web-client
-protocol. Changes must preserve the Draft-only mutation boundary, strict input
-validation, and fail-closed behavior.
+protocol. Changes must preserve operation-specific mutation allowlists,
+explicit submission intent, strict input validation, and fail-closed behavior.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ go build -o bin/msexpense ./cmd/msexpense
 | `internal/capture` | Dynamics HAR and workspace-bootstrap parsing |
 | `internal/cdphar` | CDP-backed network capture |
 | `internal/dynamics` | Protocol models, builders, and allowlist validation |
-| `internal/expense` | Draft creation and receipt workflows |
+| `internal/expense` | Draft creation, receipt, and explicit submission workflows |
 | `internal/har` | Generic HAR model and owner-only storage |
 | `internal/session` | Named session persistence, status, and locking |
 | `docs/internals` | Observed Dynamics protocol documentation |
@@ -95,7 +95,9 @@ Prefer:
 - synthetic or deliberately reviewed HAR fixtures;
 - exact CLI routing and output assertions;
 - permission, symlink, locking, and atomic-write tests; and
-- explicit negative tests for Submit, approval, posting, and workflow commands.
+- positive tests for only the exact submission primitive, plus explicit negative
+  tests for Submit in Draft/receipt flows and for approval, posting, recall, and
+  generic workflow commands everywhere.
 
 The major test areas are:
 
@@ -109,8 +111,10 @@ The major test areas are:
 - **session tests** — owner-only storage, migration, status transitions, locks,
   and secret-safe summaries.
 
-Live acceptance tests are manual, opt-in, and must use a disposable Draft-only
-scenario. They must never submit an expense.
+Live acceptance tests are manual and opt-in. Ordinary acceptance testing must
+remain Draft-only. A submission test requires separate explicit authorization,
+a disposable synthetic report, positive verification in Dynamics, and no retry
+after an uncertain result.
 
 ## Secret and fixture policy
 
@@ -147,15 +151,20 @@ version
 
 Flags describe mode and input:
 
-- `--draft` is required for mutations;
+- `create` requires exactly one of `--draft` or `--submit`;
+- an executing `--submit` also requires `--confirm-submit`;
+- `receipt attach` remains Draft-only and requires `--draft`;
 - `--receipt` is repeatable;
 - canonical mutation commands execute by default;
-- `--dry-run` disables network mutation; and
-- no Submit flag or command may be added.
+- `--dry-run` disables network mutation and is incompatible with submission
+  confirmation; and
+- submission is only a creation-time final action, not a generic workflow or
+  existing-report command.
 
 The old `msexpense` binary and flat commands are temporary compatibility
 surfaces. Legacy create commands retain their historical dry-run-by-default
-behavior. Compatibility changes must never broaden the mutation allowlist.
+behavior. Compatibility changes must never broaden the mutation allowlist,
+infer submission intent, or bypass confirmation.
 
 When changing CLI behavior, update all of:
 
@@ -178,8 +187,10 @@ When Dynamics changes its web-client protocol:
 7. Remove or securely retain the private capture outside Git.
 
 Do not add generic command execution, arbitrary control targeting, automatic
-retries after uncertain mutations, authentication bypasses, or submission
-support.
+retries after uncertain mutations, authentication bypasses, or unmodeled
+submission/workflow support. Any submission protocol change requires exact
+captured evidence, a separate validator, synthetic regression coverage, and
+positive same-report status verification.
 
 ## Documentation responsibilities
 

@@ -17,10 +17,12 @@ import (
 type ModelNode struct {
 	ID                        string
 	Name                      string
+	TypeName                  string
 	RootID                    string
 	Properties                map[string]json.RawMessage
 	ValueProperties           map[string]json.RawMessage
 	SerializedValueProperties map[string]json.RawMessage
+	Commands                  map[string]json.RawMessage
 	Path                      []string
 	Raw                       json.RawMessage
 }
@@ -452,10 +454,11 @@ func discoverRecordValues(record map[string]any) (string, string) {
 
 func modelNodeFromObject(object map[string]any, name, id, rootID string, path []string) ModelNode {
 	node := ModelNode{
-		ID:     id,
-		Name:   name,
-		RootID: rootID,
-		Path:   append([]string(nil), path...),
+		ID:       id,
+		Name:     name,
+		TypeName: stringValue(object["TypeName"]),
+		RootID:   rootID,
+		Path:     append([]string(nil), path...),
 	}
 	if properties, ok := object["Properties"].(map[string]any); ok {
 		node.Properties = rawObject(properties)
@@ -465,6 +468,9 @@ func modelNodeFromObject(object map[string]any, name, id, rootID string, path []
 	}
 	if properties, ok := object["SerializedValueProperties"].(map[string]any); ok {
 		node.SerializedValueProperties = rawObject(properties)
+	}
+	if commands, ok := object["Commands"].(map[string]any); ok {
+		node.Commands = rawObject(commands)
 	}
 	if raw, err := json.Marshal(object); err == nil {
 		node.Raw = raw
