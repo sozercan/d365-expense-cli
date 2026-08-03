@@ -25,6 +25,9 @@ type ModelNode struct {
 	Commands                  map[string]json.RawMessage
 	Path                      []string
 	Raw                       json.RawMessage
+
+	presentFields map[string]bool
+	resetFields   map[string]bool
 }
 
 // ResponseModel is the useful subset discovered from a Dynamics response.
@@ -65,10 +68,9 @@ func DiscoverResponseModel(data []byte) (ResponseModel, error) {
 			controlsByRoot: make(map[string]map[string]ModelNode),
 			formsByName:    make(map[string]map[string]ModelNode),
 		},
-		formScores:        make(map[string]int),
-		formIDScores:      make(map[string]map[string]int),
-		controlScores:     make(map[string]int),
-		controlRootScores: make(map[string]map[string]int),
+		formScores:    make(map[string]int),
+		formIDScores:  make(map[string]map[string]int),
+		controlScores: make(map[string]int),
 	}
 	state.walk(value, nil, "", "")
 	state.preferControlInForm(ControlSubmitButton, FormExpenseReportDetails)
@@ -150,7 +152,6 @@ type discoveryState struct {
 	formScores        map[string]int
 	formIDScores      map[string]map[string]int
 	controlScores     map[string]int
-	controlRootScores map[string]map[string]int
 	report            propertyCandidate
 	status            propertyCandidate
 	detailsRecord     detailsRecordCandidate
@@ -257,15 +258,10 @@ func (state *discoveryState) keepControl(node ModelNode, score int) {
 	if state.model.controlsByRoot[node.RootID] == nil {
 		state.model.controlsByRoot[node.RootID] = make(map[string]ModelNode)
 	}
-	if state.controlRootScores[node.RootID] == nil {
-		state.controlRootScores[node.RootID] = make(map[string]int)
+	if previous, ok := state.model.controlsByRoot[node.RootID][node.Name]; ok {
+		node = MergeModelNode(previous, node)
 	}
-	state.keepNode(
-		state.model.controlsByRoot[node.RootID],
-		state.controlRootScores[node.RootID],
-		node,
-		score,
-	)
+	state.model.controlsByRoot[node.RootID][node.Name] = node
 }
 
 func (state *discoveryState) preferControlInForm(controlName, formName string) {
@@ -544,12 +540,27 @@ func discoverRecordValues(record map[string]any) (string, string) {
 }
 
 func modelNodeFromObject(object map[string]any, name, id, rootID string, path []string) ModelNode {
+	presentFields := make(map[string]bool, len(object))
+	resetFields := make(map[string]bool)
+	for field := range object {
+		presentFields[field] = true
+	}
+	for _, field := range []string{"Properties", "ValueProperties", "SerializedValueProperties", "Commands"} {
+		if value, present := object[field]; present {
+			properties, ok := value.(map[string]any)
+			if !ok || len(properties) == 0 {
+				resetFields[field] = true
+			}
+		}
+	}
 	node := ModelNode{
-		ID:       id,
-		Name:     name,
-		TypeName: stringValue(object["TypeName"]),
-		RootID:   rootID,
-		Path:     append([]string(nil), path...),
+		ID:            id,
+		Name:          name,
+		TypeName:      stringValue(object["TypeName"]),
+		RootID:        rootID,
+		Path:          append([]string(nil), path...),
+		presentFields: presentFields,
+		resetFields:   resetFields,
 	}
 	if properties, ok := object["Properties"].(map[string]any); ok {
 		node.Properties = rawObject(properties)

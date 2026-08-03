@@ -39,7 +39,7 @@ func runLegacy(args []string, stdout, stderr io.Writer) int {
 	case "attach-receipt":
 		return runAttachReceipt(args[1:], stdout, stderr)
 	case "submit":
-		fmt.Fprintln(stderr, "submit is the default create outcome; use d365-expense create")
+		fmt.Fprintln(stderr, "standalone submission of an existing Draft is unsupported; d365-expense create submits only the new report it creates")
 		return 2
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])

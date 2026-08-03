@@ -170,7 +170,7 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 	}
 	submitButton := draft.submitButton
 	if activatedSubmitButton, ok := activatedModel.FindSubmitButtonInRoot(draft.detailsRootID); ok {
-		mergedSubmitButton := mergeSubmitButtonCandidate(submitButton, activatedSubmitButton)
+		mergedSubmitButton := dynamics.MergeModelNode(submitButton, activatedSubmitButton)
 		if request.FinalAction == ReportFinalActionSubmit {
 			if err := dynamics.ValidateSubmitButton(mergedSubmitButton, draft.detailsRootID); err != nil {
 				return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)

@@ -32,7 +32,8 @@ func TestHelpAndSubmitMode(t *testing.T) {
 	if code := run([]string{"submit"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("submit exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "d365-expense create") {
+	if !strings.Contains(stderr.String(), "existing Draft is unsupported") ||
+		!strings.Contains(stderr.String(), "create submits only the new report") {
 		t.Fatalf("submit rejection = %s", stderr.String())
 	}
 }

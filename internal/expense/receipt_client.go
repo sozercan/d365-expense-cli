@@ -423,7 +423,7 @@ func (client *ReceiptClient) attachReceiptLocked(ctx context.Context, request At
 		// the current report's incremental descriptor, but defer strict trust
 		// validation until the caller actually chooses Submit; draft-only
 		// SaveAndClose must not depend on SubmitButton metadata.
-		client.submitButton = mergeSubmitButtonCandidate(client.submitButton, submitButton)
+		client.submitButton = dynamics.MergeModelNode(client.submitButton, submitButton)
 	}
 	if client.saveAndCloseID == "" {
 		return AttachReceiptResult{}, errors.New("expense: SaveAndClose control is missing")
