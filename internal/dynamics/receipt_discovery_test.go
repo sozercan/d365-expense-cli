@@ -115,6 +115,22 @@ func TestDiscoverReceiptModelIgnoresStaleReportOutsideReceiptForms(t *testing.T)
 	}
 }
 
+func TestDiscoverReceiptModelDoesNotUseUnrelatedSubmitButtonAsStatusEvidence(t *testing.T) {
+	fixture := []byte(`{
+		"Messages":[{"Interactions":[
+			{"$type":"UpdateModelInteraction","Descriptor":{"Properties":{"expenseReportStatus_dataMethod":"Approved"}}},
+			{"$type":"UpdateModelInteraction","RootId":"unrelated-root","Descriptor":{"Id":"unrelated-submit","Name":"SubmitButton","TypeName":"Button"}}
+		]}]
+	}`)
+	model, err := dynamics.DiscoverReceiptModel(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Status != "" {
+		t.Fatalf("Status = %q, want empty stale status", model.Status)
+	}
+}
+
 func TestDiscoverReceiptModelPrefersReceiptDialogReportOverStaleDetails(t *testing.T) {
 	fixture := []byte(`{
 		"Messages":[{"Interactions":[

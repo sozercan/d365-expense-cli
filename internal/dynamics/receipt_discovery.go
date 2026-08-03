@@ -116,7 +116,7 @@ func receiptModelFromResponse(response ResponseModel) ReceiptModel {
 		}
 	}
 	if hasDetailsForm || model.AddReceiptButton.RootID != "" || model.ReceiptsTabPage.RootID != "" ||
-		model.SaveAndClose.RootID != "" || model.SubmitButton.RootID != "" || (hasReceiptCount && receiptCount.RootID != "") {
+		model.SaveAndClose.RootID != "" || (hasReceiptCount && receiptCount.RootID != "") {
 		// Status is report-local only when the response carries the details form
 		// or one of its receipt controls. Stage-local upload responses can include
 		// stale status properties from a previously closed report.
