@@ -23,6 +23,32 @@ func TestDiscoverAndValidateSubmitButton(t *testing.T) {
 	}
 }
 
+func TestValidateSubmitButtonDoesNotRequireEnglishLabel(t *testing.T) {
+	tests := map[string]func(*dynamics.ModelNode){
+		"localized": func(node *dynamics.ModelNode) {
+			node.ValueProperties["Label"] = submitRaw(t, "Einreichen")
+		},
+		"missing": func(node *dynamics.ModelNode) {
+			delete(node.ValueProperties, "Label")
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			node := submitButtonNode(t)
+			mutate(&node)
+			if err := dynamics.ValidateSubmitButton(node, "details-root"); err != nil {
+				t.Fatalf("ValidateSubmitButton() error = %v", err)
+			}
+		})
+	}
+
+	node := submitButtonNode(t)
+	node.ValueProperties["MenuItemName"] = submitRaw(t, "TrvSubmitWorkflow")
+	if err := dynamics.ValidateSubmitButton(node, "details-root"); err == nil {
+		t.Fatal("ValidateSubmitButton() accepted changed stable menu-item metadata")
+	}
+}
+
 func TestValidateSubmitButtonRejectsMetadataDrift(t *testing.T) {
 	tests := map[string]func(*testing.T, *dynamics.ModelNode, *string){
 		"empty details root": func(_ *testing.T, _ *dynamics.ModelNode, root *string) { *root = "" },

@@ -116,6 +116,79 @@ func TestDiscoverResponseModelRecursesThroughFormsControlsAndProperties(t *testi
 	}
 }
 
+func TestDiscoverResponseModelPrefersSubmitButtonInDetailsRoot(t *testing.T) {
+	fixture := []byte(`{
+		"Descriptors":[
+			{"Id":"unrelated-root","Name":"Unrelated_form","TypeName":"Form","ChildViewModels":[
+				{"Id":"unrelated-submit","Name":"SubmitButton","TypeName":"Button"}
+			]},
+			{"Id":"details-root","Name":"ExpenseReportDetails_form","TypeName":"Form","ChildViewModels":[
+				{"Id":"details-submit","Name":"SubmitButton","TypeName":"Button"}
+			]}
+		]
+	}`)
+
+	model, err := dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatalf("DiscoverResponseModel() error = %v", err)
+	}
+	details, ok := model.FindForm(dynamics.FormExpenseReportDetails)
+	if !ok {
+		t.Fatal("details form not discovered")
+	}
+	button, ok := model.FindControl(dynamics.ControlSubmitButton)
+	if !ok {
+		t.Fatal("SubmitButton not discovered")
+	}
+	if button.ID != "details-submit" || button.RootID != details.ID {
+		t.Fatalf("FindControl(SubmitButton) = %#v, want details-root candidate", button)
+	}
+
+	for rootID, wantID := range map[string]string{
+		"unrelated-root": "unrelated-submit",
+		"details-root":   "details-submit",
+	} {
+		button, ok := model.FindControlInRoot(dynamics.ControlSubmitButton, rootID)
+		if !ok || button.ID != wantID {
+			t.Errorf("FindControlInRoot(SubmitButton, %q) = %#v, %v; want ID %q", rootID, button, ok, wantID)
+		}
+	}
+
+	receiptModel, err := dynamics.DiscoverReceiptModel(fixture)
+	if err != nil {
+		t.Fatalf("DiscoverReceiptModel() error = %v", err)
+	}
+	if receiptModel.SubmitButton.ID != "details-submit" || receiptModel.SubmitButton.RootID != details.ID {
+		t.Fatalf("receipt SubmitButton = %#v, want details-root candidate", receiptModel.SubmitButton)
+	}
+}
+
+func TestDiscoverReceiptModelRetainsSubmitButtonsByRootWithoutDetailsForm(t *testing.T) {
+	fixture := []byte(`{
+		"Messages":[{"Interactions":[
+			{"RootId":"unrelated-root","Descriptor":{"Id":"unrelated-submit","Name":"SubmitButton","TypeName":"Button"}},
+			{"RootId":"details-root","Descriptor":{"Id":"details-submit","Name":"SubmitButton","TypeName":"Button"}}
+		]}]
+	}`)
+
+	model, err := dynamics.DiscoverReceiptModel(fixture)
+	if err != nil {
+		t.Fatalf("DiscoverReceiptModel() error = %v", err)
+	}
+	for rootID, wantID := range map[string]string{
+		"unrelated-root": "unrelated-submit",
+		"details-root":   "details-submit",
+	} {
+		button, ok := model.FindSubmitButtonInRoot(rootID)
+		if !ok || button.ID != wantID || button.RootID != rootID {
+			t.Errorf("FindSubmitButtonInRoot(%q) = %#v, %v; want ID %q", rootID, button, ok, wantID)
+		}
+	}
+	if button, ok := model.FindSubmitButtonInRoot("missing-root"); ok || button.ID != "" {
+		t.Fatalf("FindSubmitButtonInRoot(missing-root) = %#v, %v", button, ok)
+	}
+}
+
 func TestDiscoverResponseModelRejectsInvalidOrMultipleJSONValues(t *testing.T) {
 	for _, fixture := range [][]byte{[]byte(`{"Messages":`), []byte(`{} {}`)} {
 		if _, err := dynamics.DiscoverResponseModel(fixture); err == nil {

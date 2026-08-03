@@ -29,6 +29,8 @@ type combinedWorkflowOptions struct {
 	activatedStatus            string
 	postReceiptStatus          string
 	afterReceiptCount          int
+	activatedSubmitButton      map[string]any
+	confirmationSubmitButton   map[string]any
 }
 
 type combinedWorkflowObservation struct {
@@ -57,8 +59,11 @@ func TestCreateReportWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing
 	server, observed := newCombinedWorkflowServer(t, combinedWorkflowOptions{
 		createStatus:           "Draft",
 		includeActivatedButton: true,
-		postReceiptStatus:      "Draft",
-		afterReceiptCount:      1,
+		activatedSubmitButton: map[string]any{
+			"Id": "activated-tenant-submit", "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		},
+		postReceiptStatus: "Draft",
+		afterReceiptCount: 1,
 	}, fileBytes)
 	defer server.Close()
 
@@ -169,6 +174,53 @@ func TestCreateReportWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing
 		if strings.Contains(resultText, secret) {
 			t.Fatalf("result exposed %q: %s", secret, resultText)
 		}
+	}
+}
+
+func TestCreateReportWithReceiptDraftIgnoresIrrelevantSubmitButtonMetadata(t *testing.T) {
+	fileBytes := []byte("\x89PNG\r\n\x1a\ntenant-submit-metadata")
+	server, observed := newCombinedWorkflowServer(t, combinedWorkflowOptions{
+		createStatus:           "Draft",
+		includeActivatedButton: true,
+		postReceiptStatus:      "Draft",
+		afterReceiptCount:      1,
+		confirmationSubmitButton: map[string]any{
+			"Id": "tenant-submit", "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		},
+	}, fileBytes)
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	contract, err := expense.ReceiptUploadContractFromProfile(&capture.ReceiptProfile{
+		Upload: validReceiptProfile("https://unused.invalid").Upload,
+	})
+	if err != nil {
+		t.Fatalf("ReceiptUploadContractFromProfile() error = %v", err)
+	}
+	request := draftReportWithReceiptRequest(
+		"Draft with tenant-specific submit metadata",
+		"Test receipt",
+		contract,
+		expense.ReceiptInput{
+			Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)),
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(fileBytes)), nil
+			},
+		},
+	)
+
+	result, err := client.CreateReportWithReceipts(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CreateReportWithReceipts() error = %v", err)
+	}
+	if !result.SavedAndClosed || result.Submitted || result.Status != "Draft" || result.ReceiptCountAfter != 1 {
+		t.Fatalf("CreateReportWithReceipts() = %#v", result)
+	}
+	if observed.requestCount != 12 || !observed.finalSave {
+		t.Fatalf("requests=%d finalSave=%t", observed.requestCount, observed.finalSave)
 	}
 }
 
@@ -445,6 +497,9 @@ func newCombinedWorkflowServer(t *testing.T, options combinedWorkflowOptions, fi
 					}},
 				}))
 			}
+			if options.activatedSubmitButton != nil {
+				interactions = append(interactions, receiptViewModel("new-details", options.activatedSubmitButton))
+			}
 			writeEnvelope(t, w, responseEnvelope(7, last, 53, interactions...))
 		case 4:
 			assertOpenReceiptRequest(t, request, "new-details", "activated-new-receipt")
@@ -498,13 +553,17 @@ func newCombinedWorkflowServer(t *testing.T, options combinedWorkflowOptions, fi
 			writeEnvelope(t, w, responseEnvelope(7, last, 59))
 		case 11:
 			assertSingleClick(t, request, "receipt-dialog", "receipt-ok")
-			writeEnvelope(t, w, responseEnvelope(7, last, 60,
+			interactions := []json.RawMessage{
 				receiptViewModel("new-details", map[string]any{"Id": "after-count", "Name": dynamics.ControlReceiptCount, "TypeName": "Integer", "ValueProperties": map[string]any{"Value": fmt.Sprint(options.afterReceiptCount)}}),
 				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "new-details", "Descriptor": map[string]any{"Id": "after-record", "Properties": map[string]any{
 					"ExpNumber_field": combinedReportNumber, "expenseReportStatus_dataMethod": options.postReceiptStatus,
 				}}}),
 				receiptViewModel("new-details", map[string]any{"Id": "save-after-receipt", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"}),
-			))
+			}
+			if options.confirmationSubmitButton != nil {
+				interactions = append(interactions, receiptViewModel("new-details", options.confirmationSubmitButton))
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, 60, interactions...))
 		case 12:
 			assertSingleClick(t, request, "new-details", "save-after-receipt")
 			observed.finalSave = true

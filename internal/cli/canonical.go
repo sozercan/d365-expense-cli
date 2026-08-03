@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -408,6 +410,9 @@ func legacyReplacement(args []string) string {
 	}
 	switch args[0] {
 	case "create-draft", "create-draft-with-receipt", "create-draft-with-receipts":
+		if legacySubmitRequested(args) {
+			return "d365-expense create"
+		}
 		return "d365-expense create --draft"
 	case "attach-receipt":
 		return "d365-expense receipt attach --draft"
@@ -420,6 +425,28 @@ func legacyReplacement(args []string) string {
 	default:
 		return "d365-expense --help"
 	}
+}
+
+func legacySubmitRequested(args []string) bool {
+	requested := false
+	for _, arg := range args[1:] {
+		if arg == "--" {
+			break
+		}
+		name, value, hasValue := strings.Cut(arg, "=")
+		if name != "--submit" && name != "-submit" {
+			continue
+		}
+		if !hasValue {
+			requested = true
+			continue
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err == nil {
+			requested = parsed
+		}
+	}
+	return requested
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {

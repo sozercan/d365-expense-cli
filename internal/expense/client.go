@@ -329,7 +329,7 @@ func (client *Client) createDraftDetails(ctx context.Context, purpose string) (o
 	if !strings.EqualFold(strings.TrimSpace(createModel.Status), "Draft") {
 		return openDraftDetails{}, fmt.Errorf("expense: report status is not Draft: %q", createModel.Status)
 	}
-	submitButton, _ := createModel.FindControl(dynamics.ControlSubmitButton)
+	submitButton, _ := createModel.FindControlInRoot(dynamics.ControlSubmitButton, details.ID)
 
 	return openDraftDetails{
 		responseBody:   createBody,
@@ -365,6 +365,9 @@ func (client *Client) submitOpenDraft(ctx context.Context, reportNumber, details
 	}
 	if isDraftStatus(status) {
 		return "", errors.New("expense: submit response still reports the created report as Draft")
+	}
+	if !isSubmittedStatus(status) {
+		return "", fmt.Errorf("expense: submit response did not affirmatively report the created report as Submitted: %q", status)
 	}
 	model, err := dynamics.DiscoverResponseModel(body)
 	if err != nil {

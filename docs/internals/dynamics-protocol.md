@@ -166,7 +166,8 @@ The submission operation shares steps 1–4 above, then requires the discovered
 control to match the captured contract exactly:
 
 - name `SubmitButton`, type `Button`;
-- action menu item `TrvSubmit` on `TrvExpTable_ds` / `TrvExpTable`;
+- action menu item `TrvSubmit` on `TrvExpTable_ds` / `TrvExpTable` (the localized
+  display label is not used as identity);
 - visible, enabled, and save-record metadata;
 - a blocking, immediate, throttled `Click` command descriptor with no parameter
   bindings and value type `Navigate`; and
@@ -178,8 +179,11 @@ validators remain unchanged and continue to reject submit, approval, posting,
 workflow, and recall commands.
 
 After the click, success requires fresh response evidence that identifies the
-same generated report number and carries a status other than `Draft` (including
-the observed Draft status code `1`). The response must also restore an
+same generated report number and explicitly carries `Submitted` or the modeled
+status code `2`. When both are present, the stable code is authoritative over a
+localized display label; a recognized contradictory label still fails closed.
+`Draft` / code `1` and all unknown states without stable submitted evidence fail
+closed. The response must also restore an
 `ExpenseWorkspace_form` with its `NewExpenseReportReportsTab` control before the
 session is reusable. Missing, conflicting, still-Draft, or non-workspace
 evidence is an operation error and makes a named session non-ready because

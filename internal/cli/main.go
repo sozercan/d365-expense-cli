@@ -159,10 +159,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		checkpointErr = execution.finish(operationErr)
 	}
 	if operationErr != nil {
-		fmt.Fprintf(stderr, "create-draft: %v\n", operationErr)
-		if checkpointErr != nil {
-			fmt.Fprintf(stderr, "create-draft: session checkpoint also failed: %v\n", checkpointErr)
-		}
+		writeCreateReportOperationFailure(stderr, *harPath, *submit, operationErr, checkpointErr)
 		return 1
 	}
 	if report.Submitted {
@@ -177,6 +174,16 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func writeCreateReportOperationFailure(stderr io.Writer, harPath string, submit bool, operationErr, checkpointErr error) {
+	fmt.Fprintf(stderr, "create-draft: %v\n", operationErr)
+	if harPath != "" && submit {
+		fmt.Fprintln(stderr, "the report may already have been submitted and its final state may be uncertain; do not retry with the same HAR")
+	}
+	if checkpointErr != nil {
+		fmt.Fprintf(stderr, "create-draft: session checkpoint also failed: %v\n", checkpointErr)
+	}
 }
 
 func runAttachReceipt(args []string, stdout, stderr io.Writer) int {

@@ -150,3 +150,27 @@ func TestCanonicalCreateSubmitsReceiptsByDefault(t *testing.T) {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
+
+func TestLegacyReplacementPreservesCreateSubmitIntent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "draft", args: []string{"create-draft"}, want: "d365-expense create --draft"},
+		{name: "submit", args: []string{"create-draft", "--submit"}, want: "d365-expense create"},
+		{name: "singular receipt submit", args: []string{"create-draft-with-receipt", "--submit=true"}, want: "d365-expense create"},
+		{name: "plural receipts submit", args: []string{"create-draft-with-receipts", "-submit"}, want: "d365-expense create"},
+		{name: "explicit draft", args: []string{"create-draft-with-receipts", "--submit=false"}, want: "d365-expense create --draft"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := legacyReplacement(test.args); got != test.want {
+				t.Fatalf("legacyReplacement(%#v) = %q, want %q", test.args, got, test.want)
+			}
+		})
+	}
+}

@@ -29,44 +29,25 @@ func submittedReportStatus(data []byte, reportNumber string) (string, bool, erro
 		return "", false, fmt.Errorf("expense: inspect submit response trailing JSON: %w", err)
 	}
 
-	var (
-		status string
-		score  int
-		found  bool
-	)
-	var walk func(any) error
-	walk = func(current any) error {
+	var candidates []reportStatusCandidate
+	var walk func(any)
+	walk = func(current any) {
 		switch typed := current.(type) {
 		case map[string]any:
 			if objectReportNumber(typed) == reportNumber {
-				candidate, candidateScore := objectReportStatus(typed)
-				if candidateScore > 0 {
-					if found && candidate != status {
-						return errors.New("expense: submit response contains conflicting statuses for the created report")
-					}
-					if !found || candidateScore > score {
-						status, score, found = candidate, candidateScore, true
-					}
-				}
+				candidates = append(candidates, objectReportStatuses(typed)...)
 			}
 			for _, child := range typed {
-				if err := walk(child); err != nil {
-					return err
-				}
+				walk(child)
 			}
 		case []any:
 			for _, child := range typed {
-				if err := walk(child); err != nil {
-					return err
-				}
+				walk(child)
 			}
 		}
-		return nil
 	}
-	if err := walk(value); err != nil {
-		return "", false, err
-	}
-	return status, found, nil
+	walk(value)
+	return resolveReportStatusCandidates(candidates)
 }
 
 func objectReportNumber(object map[string]any) string {
@@ -85,20 +66,96 @@ func objectReportNumber(object map[string]any) string {
 	return best
 }
 
-func objectReportStatus(object map[string]any) (string, int) {
-	bestScore := 0
-	best := ""
+type reportStatusCandidate struct {
+	value  string
+	score  int
+	stable bool
+}
+
+func resolveReportStatusCandidates(candidates []reportStatusCandidate) (string, bool, error) {
+	var stable, display reportStatusCandidate
+	var stableStatus, displayStatus string
+	stableFound, displayFound := false, false
+
+	for _, candidate := range candidates {
+		normalized := normalizeReportStatus(candidate.value)
+		if candidate.stable {
+			if stableFound && normalized != stableStatus {
+				return "", false, errors.New("expense: submit response contains conflicting statuses for the created report")
+			}
+			if !stableFound || preferStableStatusCandidate(stable, candidate) {
+				stable = candidate
+			}
+			stableStatus, stableFound = normalized, true
+			continue
+		}
+
+		if displayFound && normalized != displayStatus {
+			// Defer display conflicts until stable code evidence is known. Enum
+			// labels can be localized, while ApprovalStatus_field codes are stable.
+			continue
+		}
+		if !displayFound || candidate.score > display.score {
+			display = candidate
+		}
+		displayStatus, displayFound = normalized, true
+	}
+
+	if stableFound {
+		for _, candidate := range candidates {
+			if candidate.stable {
+				continue
+			}
+			normalized := normalizeReportStatus(candidate.value)
+			if isModeledReportStatus(normalized) && normalized != stableStatus {
+				return "", false, errors.New("expense: submit response contains conflicting statuses for the created report")
+			}
+		}
+		return stable.value, true, nil
+	}
+
+	if !displayFound {
+		return "", false, nil
+	}
+	for _, candidate := range candidates {
+		if normalizeReportStatus(candidate.value) != displayStatus {
+			return "", false, errors.New("expense: submit response contains conflicting statuses for the created report")
+		}
+	}
+	switch displayStatus {
+	case "draft":
+		return "Draft", true, nil
+	case "submitted":
+		return "Submitted", true, nil
+	default:
+		return display.value, true, nil
+	}
+}
+
+func preferStableStatusCandidate(current, candidate reportStatusCandidate) bool {
+	candidateCode := strings.TrimSpace(candidate.value) == "1" || strings.TrimSpace(candidate.value) == "2"
+	currentCode := strings.TrimSpace(current.value) == "1" || strings.TrimSpace(current.value) == "2"
+	return candidateCode && !currentCode || candidateCode == currentCode && candidate.score > current.score
+}
+
+func objectReportStatuses(object map[string]any) []reportStatusCandidate {
+	var candidates []reportStatusCandidate
 	for name, value := range object {
 		text, ok := submissionScalar(value)
 		if !ok || strings.TrimSpace(text) == "" {
 			continue
 		}
-		score := submissionStatusPropertyScore(normalizeSubmissionProperty(name))
-		if score > bestScore {
-			bestScore, best = score, text
+		normalizedName := normalizeSubmissionProperty(name)
+		score := submissionStatusPropertyScore(normalizedName)
+		if score > 0 {
+			candidates = append(candidates, reportStatusCandidate{
+				value:  text,
+				score:  score,
+				stable: normalizedName == "approvalstatusfield",
+			})
 		}
 	}
-	return best, bestScore
+	return candidates
 }
 
 func submissionReportPropertyScore(name string) int {
@@ -160,6 +217,25 @@ func submissionScalar(value any) (string, bool) {
 }
 
 func isDraftStatus(status string) bool {
+	return normalizeReportStatus(status) == "draft"
+}
+
+func isSubmittedStatus(status string) bool {
+	return normalizeReportStatus(status) == "submitted"
+}
+
+func isModeledReportStatus(status string) bool {
+	return status == "draft" || status == "submitted"
+}
+
+func normalizeReportStatus(status string) string {
 	normalized := strings.ToLower(strings.TrimSpace(status))
-	return normalized == "draft" || normalized == "1"
+	switch normalized {
+	case "1", "draft":
+		return "draft"
+	case "2", "submitted":
+		return "submitted"
+	default:
+		return normalized
+	}
 }

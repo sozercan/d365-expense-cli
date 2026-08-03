@@ -418,11 +418,12 @@ func (client *ReceiptClient) attachReceiptLocked(ctx context.Context, request At
 		}
 		client.saveAndCloseID = okModel.SaveAndClose.ID
 	}
-	if okModel.SubmitButton.ID != "" {
-		if err := dynamics.ValidateSubmitButton(okModel.SubmitButton, client.detailsRootID); err != nil {
-			return AttachReceiptResult{}, fmt.Errorf("expense: dynamic SubmitButton is unsupported: %w", err)
-		}
-		client.submitButton = okModel.SubmitButton
+	if submitButton, ok := okModel.FindSubmitButtonInRoot(client.detailsRootID); ok {
+		// Receipt attachment is shared by draft-only and submit workflows. Keep
+		// the freshest candidate from this report, but defer trust validation
+		// until the caller actually chooses Submit; draft-only SaveAndClose must
+		// not depend on irrelevant or tenant-specific SubmitButton metadata.
+		client.submitButton = submitButton
 	}
 	if client.saveAndCloseID == "" {
 		return AttachReceiptResult{}, errors.New("expense: SaveAndClose control is missing")

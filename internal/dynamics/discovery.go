@@ -34,6 +34,8 @@ type ResponseModel struct {
 	Controls     map[string]ModelNode
 	ReportNumber string
 	Status       string
+
+	controlsByRoot map[string]map[string]ModelNode
 }
 
 // DiscoverResponseModel recursively searches any JSON response value. It does
@@ -57,13 +59,16 @@ func DiscoverResponseModel(data []byte) (ResponseModel, error) {
 
 	state := discoveryState{
 		model: ResponseModel{
-			Forms:    make(map[string]ModelNode),
-			Controls: make(map[string]ModelNode),
+			Forms:          make(map[string]ModelNode),
+			Controls:       make(map[string]ModelNode),
+			controlsByRoot: make(map[string]map[string]ModelNode),
 		},
-		formScores:    make(map[string]int),
-		controlScores: make(map[string]int),
+		formScores:        make(map[string]int),
+		controlScores:     make(map[string]int),
+		controlRootScores: make(map[string]map[string]int),
 	}
 	state.walk(value, nil, "", "")
+	state.preferControlInForm(ControlSubmitButton, FormExpenseReportDetails)
 	state.applyDetailsRecord()
 	return state.model, nil
 }
@@ -94,6 +99,24 @@ func (model ResponseModel) FindControl(name string) (ModelNode, bool) {
 	return node, ok
 }
 
+// FindControlInRoot looks up a recursively discovered control by exact Name
+// under the selected form/view-model root. Unlike FindControl, it can
+// distinguish same-name controls that belong to different roots.
+func (model ResponseModel) FindControlInRoot(name, rootID string) (ModelNode, bool) {
+	if rootID == "" {
+		return ModelNode{}, false
+	}
+	if controls := model.controlsByRoot[rootID]; controls != nil {
+		if node, ok := controls[name]; ok {
+			return node, true
+		}
+	}
+	// Keep the method useful for ResponseModel values assembled directly by
+	// callers rather than by DiscoverResponseModel.
+	node, ok := model.Controls[name]
+	return node, ok && node.RootID == rootID
+}
+
 // FindModel looks up either a form or a control by exact Name, preferring a
 // form when both maps contain the name.
 func (model ResponseModel) FindModel(name string) (ModelNode, bool) {
@@ -107,6 +130,7 @@ type discoveryState struct {
 	model             ResponseModel
 	formScores        map[string]int
 	controlScores     map[string]int
+	controlRootScores map[string]map[string]int
 	report            propertyCandidate
 	status            propertyCandidate
 	detailsRecord     detailsRecordCandidate
@@ -147,7 +171,7 @@ func (state *discoveryState) walk(value any, path []string, rootID, rootName str
 				node.RootID = id
 				state.keepNode(state.model.Forms, state.formScores, node, score)
 			} else {
-				state.keepNode(state.model.Controls, state.controlScores, node, score)
+				state.keepControl(node, score)
 			}
 		}
 		if strings.EqualFold(name, FormExpenseReportDetails) {
@@ -187,6 +211,37 @@ func (state *discoveryState) keepNode(nodes map[string]ModelNode, scores map[str
 	}
 	nodes[node.Name] = node
 	scores[node.Name] = score
+}
+
+func (state *discoveryState) keepControl(node ModelNode, score int) {
+	state.keepNode(state.model.Controls, state.controlScores, node, score)
+	if node.RootID == "" {
+		return
+	}
+	if state.model.controlsByRoot[node.RootID] == nil {
+		state.model.controlsByRoot[node.RootID] = make(map[string]ModelNode)
+	}
+	if state.controlRootScores[node.RootID] == nil {
+		state.controlRootScores[node.RootID] = make(map[string]int)
+	}
+	state.keepNode(
+		state.model.controlsByRoot[node.RootID],
+		state.controlRootScores[node.RootID],
+		node,
+		score,
+	)
+}
+
+func (state *discoveryState) preferControlInForm(controlName, formName string) {
+	form, ok := state.model.FindForm(formName)
+	if !ok {
+		return
+	}
+	control, ok := state.model.FindControlInRoot(controlName, form.ID)
+	if !ok {
+		return
+	}
+	state.model.Controls[controlName] = control
 }
 
 func (state *discoveryState) inspectProperties(properties map[string]any, rootName string) {

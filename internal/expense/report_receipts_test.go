@@ -22,12 +22,19 @@ import (
 )
 
 type multiReceiptServerOptions struct {
-	receiptCount        int
-	submit              bool
-	failReceiptIndex    int
-	failedReceiptStatus string
-	failedReceiptCount  int
-	includeFailedCount  bool
+	receiptCount                    int
+	submit                          bool
+	failReceiptIndex                int
+	failedReceiptStatus             string
+	failedReceiptCount              int
+	includeFailedCount              bool
+	activatedSubmitButton           map[string]any
+	activatedSubmitButtonRootID     string
+	activatedCurrentSubmitButton    map[string]any
+	confirmationSubmitButton        map[string]any
+	confirmationSubmitButtonRootID  string
+	confirmationCurrentSubmitButton map[string]any
+	expectedSubmitButtonID          string
 }
 
 type observedMultiUpload struct {
@@ -168,7 +175,17 @@ func TestCreateReportWithReceiptsAttachesInOrderAndSavesOnlyAfterAllSucceed(t *t
 
 func TestCreateReportWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *testing.T) {
 	file := []byte("\x89PNG\r\n\x1a\nsubmit-receipt")
-	server, observed := newMultiReceiptWorkflowServer(t, multiReceiptServerOptions{receiptCount: 1, submit: true}, [][]byte{file})
+	server, observed := newMultiReceiptWorkflowServer(t, multiReceiptServerOptions{
+		receiptCount:                    1,
+		submit:                          true,
+		activatedSubmitButton:           submitButtonDescriptor("unrelated-activated-submit"),
+		activatedSubmitButtonRootID:     "unrelated-activated-details",
+		activatedCurrentSubmitButton:    submitButtonDescriptor("submit-activated-current"),
+		confirmationSubmitButton:        submitButtonDescriptor("unrelated-submit"),
+		confirmationSubmitButtonRootID:  "unrelated-details",
+		confirmationCurrentSubmitButton: submitButtonDescriptor("submit-confirmed-current"),
+		expectedSubmitButtonID:          "submit-confirmed-current",
+	}, [][]byte{file})
 	defer server.Close()
 
 	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
@@ -209,6 +226,53 @@ func TestCreateReportWithReceiptsSubmitsOnlyAfterEveryReceiptSucceeds(t *testing
 	}
 	if observed.submitCount != 1 || observed.saveCount != 0 || observed.requestCount != 12 {
 		t.Fatalf("requests=%d submit=%d save=%d", observed.requestCount, observed.submitCount, observed.saveCount)
+	}
+}
+
+func TestCreateReportWithReceiptsValidatesDynamicSubmitButtonOnlyWhenSubmitting(t *testing.T) {
+	file := []byte("\x89PNG\r\n\x1a\ninvalid-submit-metadata")
+	server, observed := newMultiReceiptWorkflowServer(t, multiReceiptServerOptions{
+		receiptCount: 1,
+		submit:       true,
+		confirmationSubmitButton: map[string]any{
+			"Id": "tenant-submit", "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		},
+	}, [][]byte{file})
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := expense.ReceiptUploadContractFromProfile(&capture.ReceiptProfile{
+		Upload: validReceiptProfile("https://unused.invalid").Upload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := expense.CreateReportWithReceiptsRequest{
+		Purpose:        "Submit with tenant-specific metadata",
+		UploadContract: contract,
+		FinalAction:    expense.ReportFinalActionSubmit,
+		Receipts: []expense.CreateReportReceiptInput{{
+			Receipt: expense.ReceiptInput{
+				Filename: "receipt.png", MediaType: "image/png", Size: int64(len(file)),
+				Open: func() (io.ReadCloser, error) {
+					return io.NopCloser(bytes.NewReader(file)), nil
+				},
+			},
+		}},
+	}
+
+	_, err = client.CreateReportWithReceipts(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "submit control is unavailable or unsupported") {
+		t.Fatalf("CreateReportWithReceipts() error = %v", err)
+	}
+	if strings.Contains(err.Error(), "attach receipt") {
+		t.Fatalf("SubmitButton was validated during receipt attachment: %v", err)
+	}
+	if observed.requestCount != 11 || observed.submitCount != 0 || observed.saveCount != 0 {
+		t.Fatalf("requests=%d submit=%d save=%d, want 11/0/0", observed.requestCount, observed.submitCount, observed.saveCount)
 	}
 }
 
@@ -497,7 +561,7 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 		case 3:
 			assertActivateTabRequest(t, envelope, "new-details", "new-receipts-tab")
 			observed.activateCount++
-			writeEnvelope(t, w, responseEnvelope(7, last, serverSequence,
+			interactions := []json.RawMessage{
 				receiptViewModel("new-details", map[string]any{
 					"Id": "new-receipts-tab", "Name": dynamics.ControlReceiptsTabPage, "TypeName": "PivotItem",
 					"ChildViewModels": []any{map[string]any{"Id": "new-receipt-1", "Name": dynamics.ControlNewReceiptButton, "TypeName": "MenuItemButton"}},
@@ -506,7 +570,18 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "new-details", "Descriptor": map[string]any{"Id": "activated-record", "Properties": map[string]any{
 					"ExpNumber_field": combinedReportNumber, "expenseReportStatus_dataMethod": "Draft",
 				}}}),
-			))
+			}
+			if options.activatedSubmitButton != nil {
+				rootID := "new-details"
+				if options.activatedSubmitButtonRootID != "" {
+					rootID = options.activatedSubmitButtonRootID
+				}
+				interactions = append(interactions, receiptViewModel(rootID, options.activatedSubmitButton))
+			}
+			if options.activatedCurrentSubmitButton != nil {
+				interactions = append(interactions, receiptViewModel("new-details", options.activatedCurrentSubmitButton))
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, serverSequence, interactions...))
 		default:
 			receiptIndex, offset, ok := multiReceiptStage(stage, options.receiptCount)
 			if ok {
@@ -518,7 +593,11 @@ func newMultiReceiptWorkflowServer(t *testing.T, options multiReceiptServerOptio
 				t.Fatalf("unexpected stage %d", stage)
 			}
 			if options.submit {
-				assertSingleClick(t, envelope, "new-details", fmt.Sprintf("submit-after-%d", options.receiptCount))
+				targetID := options.expectedSubmitButtonID
+				if targetID == "" {
+					targetID = fmt.Sprintf("submit-after-%d", options.receiptCount)
+				}
+				assertSingleClick(t, envelope, "new-details", targetID)
 				observed.submitCount++
 			} else {
 				assertSingleClick(t, envelope, "new-details", fmt.Sprintf("save-after-%d", options.receiptCount))
@@ -641,7 +720,18 @@ func handleMultiReceiptStage(
 			receiptViewModel("new-details", map[string]any{"Id": fmt.Sprintf("save-after-%d", suffix), "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"}),
 		}
 		if options.submit {
-			interactions = append(interactions, receiptViewModel("new-details", submitButtonDescriptor(fmt.Sprintf("submit-after-%d", suffix))))
+			descriptor := submitButtonDescriptor(fmt.Sprintf("submit-after-%d", suffix))
+			if options.confirmationSubmitButton != nil {
+				descriptor = options.confirmationSubmitButton
+			}
+			rootID := "new-details"
+			if options.confirmationSubmitButtonRootID != "" {
+				rootID = options.confirmationSubmitButtonRootID
+			}
+			interactions = append(interactions, receiptViewModel(rootID, descriptor))
+			if options.confirmationCurrentSubmitButton != nil {
+				interactions = append(interactions, receiptViewModel("new-details", options.confirmationCurrentSubmitButton))
+			}
 		}
 		if includeCount {
 			interactions = append([]json.RawMessage{

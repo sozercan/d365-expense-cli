@@ -18,7 +18,6 @@ const (
 
 const (
 	submitButtonType       = "Button"
-	submitButtonLabel      = "Submit"
 	submitMenuItemType     = "Action"
 	submitPrimaryModelName = "TrvExpTable_ds"
 	submitServiceBoundary  = "TrvExpTable"
@@ -103,7 +102,6 @@ func ValidateSubmitButton(node ModelNode, detailsRootID string) error {
 		name       string
 		want       string
 	}{
-		{node.ValueProperties, "Label", submitButtonLabel},
 		{node.ValueProperties, "MenuItemName", MenuItemSubmit},
 		{node.ValueProperties, "MenuItemType", submitMenuItemType},
 		{node.ValueProperties, "PrimaryModelName", submitPrimaryModelName},

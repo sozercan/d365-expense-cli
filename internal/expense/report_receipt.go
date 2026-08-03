@@ -162,11 +162,13 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 		saveAndCloseID = activatedModel.SaveAndClose.ID
 	}
 	submitButton := draft.submitButton
-	if activatedModel.SubmitButton.ID != "" {
-		if err := dynamics.ValidateSubmitButton(activatedModel.SubmitButton, draft.detailsRootID); err != nil {
-			return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
+	if activatedSubmitButton, ok := activatedModel.FindSubmitButtonInRoot(draft.detailsRootID); ok {
+		if request.FinalAction == ReportFinalActionSubmit {
+			if err := dynamics.ValidateSubmitButton(activatedSubmitButton, draft.detailsRootID); err != nil {
+				return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
+			}
 		}
-		submitButton = activatedModel.SubmitButton
+		submitButton = activatedSubmitButton
 	}
 
 	uploadEndpoint, err := receiptUploadEndpoint(client.origin, request.UploadContract)

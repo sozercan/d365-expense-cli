@@ -304,6 +304,10 @@ func TestCreateAndSubmitUsesExactDiscoveredSubmitButton(t *testing.T) {
 		case 2:
 			writeEnvelope(t, w, responseEnvelope(7, last, 52,
 				viewModelInteraction(map[string]any{
+					"Id": "unrelated-root", "Name": "Unrelated_form", "TypeName": "Form",
+					"ChildViewModels": []any{submitButtonDescriptor("unrelated-submit")},
+				}),
+				viewModelInteraction(map[string]any{
 					"Id": "submit-details", "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
 					"ChildModelCollections": map[string]any{"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{
 						"Id": "submit-record", "Properties": map[string]any{"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-SUBMIT", "expenseReportStatus_dataMethod": "Draft"},

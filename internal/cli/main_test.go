@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,6 +44,38 @@ func TestCreateDraftRequiresExplicitInputs(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "requires exactly one of --har or --session") {
 		t.Fatalf("stderr = %s", stderr.String())
+	}
+}
+
+func TestCreateReportFailureWarnsDirectHARSubmitUsersNotToRetry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		harPath  string
+		submit   bool
+		wantWarn bool
+	}{
+		{name: "direct HAR submit", harPath: "capture.har", submit: true, wantWarn: true},
+		{name: "named session submit", submit: true, wantWarn: false},
+		{name: "direct HAR draft", harPath: "capture.har", wantWarn: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var stderr bytes.Buffer
+			writeCreateReportOperationFailure(&stderr, test.harPath, test.submit, errors.New("response verification failed"), nil)
+
+			output := stderr.String()
+			if !strings.Contains(output, "response verification failed") {
+				t.Fatalf("stderr omitted operation error: %q", output)
+			}
+			for _, warning := range []string{"may already have been submitted", "do not retry with the same HAR"} {
+				if got := strings.Contains(output, warning); got != test.wantWarn {
+					t.Fatalf("stderr warning %q present = %t, want %t: %q", warning, got, test.wantWarn, output)
+				}
+			}
+		})
 	}
 }
 

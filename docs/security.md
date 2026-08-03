@@ -13,9 +13,10 @@ same newly created report.
   and recall commands. A separate submission validator permits only one exact
   `Click` against the dynamically discovered `SubmitButton` for the newly
   created report.
-- Submission success requires response evidence for the same report showing a
-  status other than Draft. An HTTP success or sequence acknowledgement alone is
-  insufficient.
+- Submission success requires response evidence for the same report explicitly
+  showing `Submitted` or the modeled status code `2`. Stable code evidence takes
+  precedence over localized display text; unknown non-Draft states without that
+  evidence, an HTTP success, or a sequence acknowledgement alone are insufficient.
 - No generic click, control, message, or upload interface is exposed.
 
 Canonical mutating commands execute by default. Use `--dry-run` to perform local

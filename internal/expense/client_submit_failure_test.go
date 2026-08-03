@@ -34,6 +34,22 @@ func TestCreateAndSubmitRequiresVerifiedStatusAndRestoredWorkspace(t *testing.T)
 			wantError: "still reports",
 		},
 		{
+			name: "unmodeled status label",
+			finalInteractions: []json.RawMessage{
+				submitStatusInteraction("Approved"),
+				submitWorkspaceInteraction(),
+			},
+			wantError: "did not affirmatively report",
+		},
+		{
+			name: "unmodeled status code",
+			finalInteractions: []json.RawMessage{
+				submitStatusInteraction("3"),
+				submitWorkspaceInteraction(),
+			},
+			wantError: "did not affirmatively report",
+		},
+		{
 			name: "workspace not restored",
 			finalInteractions: []json.RawMessage{
 				submitStatusInteraction("2"),
