@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sozercan/d365-expense-cli/internal/expense"
 )
 
 func TestReceiptInputsFromPathsPreserveOrderAndNotes(t *testing.T) {
@@ -50,7 +53,7 @@ func TestReceiptInputsFromPathsPreserveOrderAndNotes(t *testing.T) {
 	}
 }
 
-func TestCreateDraftWithReceiptsRequiresFilesAndBoundsCount(t *testing.T) {
+func TestLegacyCreateDraftWithReceiptsRequiresFilesAndBoundsCount(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"create-draft-with-receipts", "--session", "work", "--purpose", "event"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("missing files exit code = %d, want 2", code)
@@ -70,5 +73,31 @@ func TestCreateDraftWithReceiptsRequiresFilesAndBoundsCount(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "at most") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCreateReportWithReceiptsFailureWarnsOnlyWhenOutcomeIsUncertain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		operationErr error
+		wantWarning  bool
+	}{
+		{name: "early authentication failure", operationErr: expense.ErrAuthenticationExpired},
+		{
+			name:         "late authentication failure",
+			operationErr: errors.Join(expense.ErrOperationUncertain, expense.ErrAuthenticationExpired),
+			wantWarning:  true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var stderr bytes.Buffer
+			writeCreateReportWithReceiptsOperationFailure(&stderr, "create-draft-with-receipts", test.operationErr, nil)
+			if got := strings.Contains(stderr.String(), "final state may be uncertain"); got != test.wantWarning {
+				t.Fatalf("warning present = %t, want %t: %q", got, test.wantWarning, stderr.String())
+			}
+		})
 	}
 }

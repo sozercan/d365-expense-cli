@@ -1,47 +1,30 @@
 # d365-expense
 
-Create Dynamics 365 Finance expense reports from the command line, attach one
-or more receipts, and save everything as a Draft.
+Create Dynamics 365 Finance expense reports from the command line, attach
+receipts, submit reports, or save them as Drafts.
 
-> [!IMPORTANT]
-> **Draft-only by design.** `d365-expense` has no submit command and cannot
-> submit, approve, post, or recall an expense report.
->
-> `create` performs real changes unless you pass `--dry-run`.
+## What you can do
 
-## What it does
+- Create and submit a new expense report.
+- Save a new report as a Draft with `--draft`.
+- Attach up to 20 PNG receipts to a new report.
+- Preview a report with `--dry-run` before making changes.
+- Reuse a named authenticated Dynamics session.
+- Attach a receipt to an existing captured Draft.
 
-- Creates a new expense report in **Draft** status.
-- Attaches up to 20 PNG receipts in the order provided.
-- Selects **Save and close** only after every receipt succeeds.
-- Reuses a securely stored authenticated Dynamics session.
-- Stops instead of retrying when the remote result may be uncertain.
+## Requirements
 
-## Before you begin
+- Access to the Dynamics 365 Finance **Expense management** workspace.
+- Permission to create and submit expense reports.
+- Go 1.24 or newer.
+- Authentication from either:
+  - a private browser HAR captured from the Expense workspace; or
+  - a signed-in Microsoft Edge session available through local CDP.
 
-You need:
-
-1. Access to the Dynamics 365 Finance **Expense management** workspace.
-2. Permission to create expense-report Drafts.
-3. A current authenticated session, acquired from either:
-   - a private browser HAR; or
-   - a dedicated local Microsoft Edge session through CDP.
-4. Receipts saved as private PNG files no larger than 1,024,000 bytes each.
-
-HAR files and imported sessions contain credentials. Never share, upload, or
-commit them.
-
-### A few terms
-
-- **Session** — the local authenticated state used by the CLI.
-- **HAR** — a private browser network capture that can be imported or used once
-  directly.
-- **CDP** — a local connection to an authenticated Microsoft Edge browser used
-  to acquire session state without manually exporting a HAR.
+Receipts must be PNG files no larger than 1,024,000 bytes. HAR files and saved
+sessions contain credentials; keep them private and never commit them.
 
 ## Install
-
-Install Go 1.24 or newer, then run:
 
 ```bash
 go install github.com/sozercan/d365-expense-cli/cmd/d365-expense@latest
@@ -53,23 +36,14 @@ Verify the installation:
 d365-expense version
 ```
 
-If you are working from a source checkout, see
-[CONTRIBUTING.md](CONTRIBUTING.md) for build and test instructions.
-
-## How it works
-
-1. Acquire current Dynamics authentication from a HAR or local Edge session.
-2. Store it under a short session name such as `work`.
-3. Preview the expense with `--dry-run`.
-4. Create one unsubmitted Draft and attach the receipts.
+For local development and source builds, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quick start
 
-### 1. Acquire a session
+### 1. Import a session
 
-Choose one method.
-
-#### Import a private HAR
+Import a private HAR from an authenticated Expense workspace:
 
 ```bash
 chmod 600 expense-workspace.har
@@ -78,36 +52,21 @@ d365-expense session import work \
   --har expense-workspace.har
 ```
 
-This is the browser-free path after import. The HAR must come from an
-authenticated Expense workspace and must include sensitive request and response
-data.
-
-#### Import from a signed-in Edge browser
-
-From a source checkout, start the dedicated browser profile:
-
-```bash
-./scripts/open-edge-cdp.sh
-```
-
-Sign in to Dynamics, open the **Expense management** workspace, and import the
-session:
+Or import from a signed-in Edge browser running with local CDP:
 
 ```bash
 d365-expense session import work \
   --cdp http://127.0.0.1:9222
 ```
 
-For the current CDP workflow, keep that Edge tab and browser open until the
-expense command finishes. No raw HAR is written.
+The repository includes `./scripts/open-edge-cdp.sh` to start a dedicated Edge
+profile on macOS or Linux. Sign in, open exactly one Expense management tab,
+and keep it open until the import and immediate expense command finish.
 
-### 2. Preview the expense
-
-Always start with a dry run:
+### 2. Preview the report
 
 ```bash
 d365-expense create \
-  --draft \
   --session work \
   --purpose "Conference travel" \
   --receipt outbound.png \
@@ -116,16 +75,15 @@ d365-expense create \
   --dry-run
 ```
 
-The preview validates the session and every local receipt without creating an
-expense report.
+A dry run validates the session and local receipt files without creating a
+report or sending receipt data.
 
-### 3. Create the Draft
+### 3. Create and submit
 
-Review the preview, then run the same command without `--dry-run`:
+Run the reviewed command without `--dry-run`:
 
 ```bash
 d365-expense create \
-  --draft \
   --session work \
   --purpose "Conference travel" \
   --receipt outbound.png \
@@ -133,42 +91,22 @@ d365-expense create \
   --receipt-note "Ground transportation"
 ```
 
-This creates one Draft, attaches both receipts, and selects **Save and close**.
-It does not submit the report.
+## Create reports
 
-### 4. Confirm the result
-
-A successful result looks like:
-
-```text
-created draft <report-id>: purpose="Conference travel" status=Draft
-receipts=2 ... saved-and-closed=true
-```
-
-Confirm these fields:
-
-- `status=Draft`
-- the expected receipt count
-- `saved-and-closed=true`
-
-## Common recipes
-
-### Create a Draft without receipts
+### Without receipts
 
 ```bash
 d365-expense create \
-  --draft \
   --session work \
   --purpose "Team offsite"
 ```
 
-### Attach several receipts
+### With several receipts
 
-Repeat `--receipt`; order is preserved:
+Repeat `--receipt` in the order the files should be attached:
 
 ```bash
 d365-expense create \
-  --draft \
   --session work \
   --purpose "Customer visit" \
   --receipt flight.png \
@@ -178,24 +116,51 @@ d365-expense create \
 
 `--receipt-note` applies the same note to every receipt in the command.
 
-### Use a HAR directly
+### Save as a Draft
 
-Importing is optional:
+`create` submits the new report. Add `--draft` to save it without submitting:
 
 ```bash
 d365-expense create \
   --draft \
+  --session work \
+  --purpose "Customer visit" \
+  --receipt flight.png
+```
+
+### Use a HAR directly
+
+A named session is recommended for normal use, but a private HAR can be used
+for a one-off command:
+
+```bash
+d365-expense create \
   --har expense-workspace.har \
   --purpose "Conference travel" \
   --receipt taxi.png \
   --dry-run
 ```
 
-Direct HAR mode is one-shot after a network operation begins. Named sessions
-are safer for repeated use because the CLI can checkpoint updated sequence and
-credential state.
+Do not reuse a HAR after an executing command has started.
 
-### View or remove sessions
+## Attach a receipt to an existing Draft
+
+This compatibility workflow requires a private, report-specific HAR captured
+with the Draft already open:
+
+```bash
+d365-expense receipt attach \
+  --draft \
+  --har receipt-attach.har \
+  --report <report-id> \
+  --receipt receipt.png \
+  --dry-run
+```
+
+Remove `--dry-run` after reviewing the command. This operation attaches the
+receipt and keeps the report as a Draft.
+
+## Sessions
 
 ```bash
 d365-expense session list
@@ -203,34 +168,18 @@ d365-expense session show work
 d365-expense session remove work
 ```
 
-`list` and `show` display only safe metadata and credential names, never secret
-values.
+Session states:
 
-## Receipt requirements
+- **`ready`** — available for a command.
+- **`expired`** — authentication is no longer accepted; sign in and import a new
+  session.
+- **`uncertain`** — a command may have partially completed; inspect the report
+  in Dynamics and import a new session before continuing.
+- **`in_progress`** — a command started but did not finish cleanly; check whether
+  a process is still running.
 
-Every receipt must be:
-
-- a regular, non-symlink file;
-- PNG format with a `.png` extension;
-- non-empty;
-- no larger than 1,024,000 bytes; and
-- owner-only on Unix-like systems, normally mode `0600`.
-
-A single Draft can include up to 20 receipts. Receipts are attached at report
-level; the CLI does not match them to individual expense lines.
-
-## Session status
-
-- **`ready`** — available for an expense command.
-- **`expired`** — Dynamics rejected the authentication. Sign in and import
-  again.
-- **`uncertain`** — a remote operation may have partially succeeded. Inspect
-  Dynamics, then import again.
-- **`in_progress`** — a command started but did not finish cleanly. Do not
-  retry; check for a running process.
-
-If a crashed process left a stale lock, first confirm no `d365-expense` process
-is using the session, then run:
+If a crashed process leaves a stale lock, first verify that no
+`d365-expense` process is using the session, then run:
 
 ```bash
 d365-expense session unlock work
@@ -239,52 +188,68 @@ d365-expense session unlock work
 Unlocking does not make a non-ready session reusable. Import fresh
 authentication afterward.
 
-## Troubleshooting
+## Receipt requirements
 
-- **`--draft is required`** — add `--draft`; it is the explicit Draft-only
-  safety acknowledgement.
-- **Session is `expired`** — sign in again and re-import from HAR or CDP.
-- **Session is `uncertain`** — check Dynamics for partial work, then replace
-  the session.
-- **Authentication redirects to Microsoft sign-in** — refresh authentication
-  and import again.
-- **Receipt is rejected** — convert it to a private PNG under the size limit.
-- **CDP cannot find the Expense workspace** — open exactly one authenticated
-  Expense workspace tab.
-- **A dry run works but execution fails** — do not automatically retry; inspect
-  the session status first.
+Each receipt must be:
 
-More help is available in [the troubleshooting guide](docs/troubleshooting.md).
+- a PNG with a `.png` extension;
+- non-empty and no larger than 1,024,000 bytes;
+- a regular, non-symlink file; and
+- owner-only on macOS and Linux, normally mode `0600`.
 
-## Platform notes
+A report can include up to 20 receipts. Receipts are attached to the report, not
+to individual expense lines.
 
-- macOS and Linux support the complete workflow, including the Edge launcher
-  and owner-only HAR capture.
-- The CLI builds on Windows, but raw HAR capture is not supported where the CLI
-  cannot guarantee Unix-style owner-only file permissions.
-- CDP acquisition currently targets Microsoft Edge. HAR import does not require
-  Edge after the capture already exists.
+## Troubleshooting and recovery
 
-## Security and cleanup
+- **Authentication expired or redirected to sign-in** — sign in again and
+  import a new session.
+- **Session is `uncertain`** — inspect Dynamics before doing anything else. Do
+  not retry the same operation.
+- **Receipt rejected** — verify the format, extension, size, and file
+  permissions.
+- **CDP cannot find the workspace** — leave exactly one authenticated Expense
+  management tab open in the dedicated Edge profile.
+- **Dry run succeeds but execution fails** — inspect the session state and the
+  report in Dynamics before retrying with fresh authentication.
 
-- Treat HARs and session files like passwords.
+See [Troubleshooting](docs/troubleshooting.md) for detailed recovery guidance.
+
+## Limitations
+
+- `create` operates on new reports; it cannot reopen and submit an existing
+  Draft by report number.
+- The CLI does not approve, post, or recall reports.
+- Receipts must be PNG files and are attached at report level.
+- CDP acquisition currently targets Microsoft Edge.
+- Raw HAR capture requires owner-only file permissions and is not supported on
+  Windows when those permissions cannot be enforced.
+
+## Security
+
+- Treat HAR and session files like passwords.
 - Keep CDP bound to loopback (`127.0.0.1`).
-- Do not use the dedicated Edge profile for unrelated browsing.
-- Never edit a session status back to `ready` manually.
-- Never automatically retry an uncertain expense operation.
+- Use the dedicated Edge profile only for Dynamics expense work.
+- Never edit a session state back to `ready` manually.
+- Never retry an operation whose result is uncertain.
 - Delete raw HAR files when they are no longer needed.
-- Remove imported credentials with `d365-expense session remove <name>`.
+- Remove saved credentials with `d365-expense session remove <name>`.
 
-Read the full [security model](docs/security.md) before using the CLI with real
-expense data.
+Read [Security model](docs/security.md) before using the CLI with real expense
+data.
 
-## More documentation
+## Documentation
+
+### Using the CLI
 
 - [Sessions and recovery](docs/sessions.md)
 - [CDP session acquisition](docs/cdp.md)
-- [Troubleshooting](docs/troubleshooting.md)
 - [Advanced usage](docs/advanced-usage.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Migration from `msexpense`](docs/migration.md)
+
+### Development and protocol details
+
 - [Dynamics protocol internals](docs/internals/dynamics-protocol.md)
 - [Receipt protocol internals](docs/internals/receipt-protocol.md)
 - [Contributing](CONTRIBUTING.md)

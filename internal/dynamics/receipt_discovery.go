@@ -17,6 +17,7 @@ type ReceiptModel struct {
 	AddReceiptButton     ModelNode
 	ReceiptsTabPage      ModelNode
 	SaveAndClose         ModelNode
+	SubmitButton         ModelNode
 	AccessToken          string
 	CurrentRecID         string
 	CurrentDocuRefRecID  string
@@ -26,6 +27,8 @@ type ReceiptModel struct {
 	Status               string
 	ReceiptCount         int
 	ReceiptCountPresent  bool
+
+	submitButtonsByRoot map[string]ModelNode
 }
 
 // DiscoverReceiptModel extracts receipt form/control IDs and upload metadata
@@ -36,6 +39,22 @@ func DiscoverReceiptModel(data []byte) (ReceiptModel, error) {
 		return ReceiptModel{}, fmt.Errorf("discover receipt model: %w", err)
 	}
 	return receiptModelFromResponse(response), nil
+}
+
+// FindSubmitButtonInRoot returns the SubmitButton discovered under one known
+// details-form root, including incremental responses that omit the form
+// descriptor while carrying controls for more than one root.
+func (model ReceiptModel) FindSubmitButtonInRoot(rootID string) (ModelNode, bool) {
+	if rootID == "" {
+		return ModelNode{}, false
+	}
+	if button, ok := model.submitButtonsByRoot[rootID]; ok {
+		return button, true
+	}
+	if model.SubmitButton.ID != "" && model.SubmitButton.RootID == rootID {
+		return model.SubmitButton, true
+	}
+	return ModelNode{}, false
 }
 
 // DiscoverReceiptEnvelopeModel discovers receipt data from a parsed envelope.
@@ -57,6 +76,17 @@ func receiptModelFromResponse(response ResponseModel) ReceiptModel {
 	model.AddReceiptButton = firstControl(response, ControlNewReceiptButton, ControlAddReceipts)
 	model.ReceiptsTabPage, _ = response.FindControl(ControlReceiptsTabPage)
 	model.SaveAndClose, _ = response.FindControl(ControlSaveAndClose)
+	model.submitButtonsByRoot = make(map[string]ModelNode)
+	for rootID, controls := range response.controlsByRoot {
+		if button, ok := controls[ControlSubmitButton]; ok {
+			model.submitButtonsByRoot[rootID] = button
+		}
+	}
+	if hasDetailsForm {
+		model.SubmitButton, _ = model.FindSubmitButtonInRoot(detailsForm.ID)
+	} else {
+		model.SubmitButton, _ = response.FindControl(ControlSubmitButton)
+	}
 
 	model.AccessToken = nodeScalar(model.UploadControl, "AccessToken")
 	model.CurrentRecID = nodeScalar(model.UploadControl, "CurrentRecId")
@@ -155,6 +185,16 @@ func MergeReceiptModels(models ...ReceiptModel) ReceiptModel {
 		mergeNode(&merged.AddReceiptButton, model.AddReceiptButton)
 		mergeNode(&merged.ReceiptsTabPage, model.ReceiptsTabPage)
 		mergeNode(&merged.SaveAndClose, model.SaveAndClose)
+		mergeNode(&merged.SubmitButton, model.SubmitButton)
+		if merged.submitButtonsByRoot == nil {
+			merged.submitButtonsByRoot = make(map[string]ModelNode)
+		}
+		for rootID, button := range model.submitButtonsByRoot {
+			merged.submitButtonsByRoot[rootID] = button
+		}
+		if model.SubmitButton.ID != "" && model.SubmitButton.RootID != "" {
+			merged.submitButtonsByRoot[model.SubmitButton.RootID] = model.SubmitButton
+		}
 		for destination, source := range map[*string]string{
 			&merged.AccessToken: model.AccessToken, &merged.CurrentRecID: model.CurrentRecID,
 			&merged.CurrentDocuRefRecID: model.CurrentDocuRefRecID, &merged.CurrentTableID: model.CurrentTableID,
@@ -175,7 +215,7 @@ func MergeReceiptModels(models ...ReceiptModel) ReceiptModel {
 
 // CommandTargets returns the allowlist IDs represented by this discovery.
 func (model ReceiptModel) CommandTargets() ReceiptCommandTargets {
-	detailsRootID := firstNonEmpty(model.AddReceiptButton.RootID, model.ReceiptsTabPage.RootID, model.SaveAndClose.RootID)
+	detailsRootID := firstNonEmpty(model.AddReceiptButton.RootID, model.ReceiptsTabPage.RootID, model.SaveAndClose.RootID, model.SubmitButton.RootID)
 	dialogRootID := firstNonEmpty(model.AddNewReceiptForm.ID, model.UploadControl.RootID, model.OKButton.RootID)
 	return ReceiptCommandTargets{
 		DetailsRootID:      detailsRootID,
@@ -200,10 +240,10 @@ func firstNonEmpty(values ...string) string {
 // SafeSummary reports discovery completeness without including AccessToken.
 func (model ReceiptModel) SafeSummary() string {
 	return fmt.Sprintf(
-		"receipt model: report=%q status=%q receipt-count=%d receipt-count-present=%t form=%t upload=%t ok=%t close=%t add=%t tab=%t save=%t access-token-present=%t",
+		"receipt model: report=%q status=%q receipt-count=%d receipt-count-present=%t form=%t upload=%t ok=%t close=%t add=%t tab=%t save=%t submit=%t access-token-present=%t",
 		model.ReportNumber, model.Status, model.ReceiptCount, model.ReceiptCountPresent,
 		model.AddNewReceiptForm.ID != "", model.UploadControl.ID != "", model.OKButton.ID != "", model.CloseButton.ID != "",
-		model.AddReceiptButton.ID != "", model.ReceiptsTabPage.ID != "", model.SaveAndClose.ID != "",
+		model.AddReceiptButton.ID != "", model.ReceiptsTabPage.ID != "", model.SaveAndClose.ID != "", model.SubmitButton.ID != "",
 		model.AccessToken != "",
 	)
 }

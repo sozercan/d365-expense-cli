@@ -44,8 +44,8 @@ These commands print safe metadata and credential names, not secret values.
 - **`ready`** — the session may be used.
 - **`in_progress`** — an operation started and may have been interrupted. Do
   not retry automatically.
-- **`uncertain`** — Dynamics may have accepted partial work. Inspect Dynamics
-  and re-import.
+- **`uncertain`** — Dynamics may have accepted partial work or a submission that
+  the CLI could not verify. Inspect Dynamics, do not retry, and re-import.
 - **`expired`** — authentication was rejected or redirected to sign-in. Sign
   in and re-import.
 
@@ -103,6 +103,8 @@ Also delete any raw HAR used for import when it is no longer needed.
 
 ## Direct HAR mode
 
-You can skip session import and pass `--har` directly to `create`. Direct HAR
-mode does not checkpoint updated sequence state, so it must be treated as
-one-shot after any network request begins.
+You can skip session import and pass `--har` directly to `create`, which submits
+by default unless `--draft` is supplied. Direct HAR mode does not checkpoint
+updated sequence state, so it must be treated as one-shot after any network
+request begins. Named sessions are safer for submission because uncertain
+outcomes are persisted as non-reusable state.

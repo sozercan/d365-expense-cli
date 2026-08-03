@@ -93,6 +93,8 @@ func (execution *namedSessionExecution) finish(operationErr error) error {
 	}
 	if operationErr == nil && checkpointErr == nil {
 		execution.stored.Status = sessionstore.StatusReady
+	} else if errors.Is(operationErr, expense.ErrOperationUncertain) {
+		execution.stored.Status = sessionstore.StatusUncertain
 	} else if errors.Is(operationErr, expense.ErrAuthenticationExpired) {
 		execution.stored.Status = sessionstore.StatusExpired
 	} else {

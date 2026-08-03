@@ -2,22 +2,29 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/sozercan/d365-expense-cli/internal/expense"
 )
 
-func TestHelpAndSubmitBoundary(t *testing.T) {
+func TestHelpAndSubmitMode(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"help"}, &stdout, &stderr); code != 0 {
+	if code := run([]string{"create", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("help exit code = %d", code)
 	}
-	if !strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), "no submit") {
-		t.Fatalf("help did not describe submit boundary: %s", stdout.String())
+	help := strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " "))
+	if !strings.Contains(help, "submit") || !strings.Contains(help, "--draft") {
+		t.Fatalf("help did not describe default submission and the Draft opt-out: %s", stdout.String())
+	}
+	if strings.Contains(help, "--submit") || strings.Contains(help, "--confirm-submit") {
+		t.Fatalf("help exposed redundant submission flags: %s", stdout.String())
 	}
 
 	stdout.Reset()
@@ -25,7 +32,8 @@ func TestHelpAndSubmitBoundary(t *testing.T) {
 	if code := run([]string{"submit"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("submit exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "intentionally unsupported") {
+	if !strings.Contains(stderr.String(), "existing Draft is unsupported") ||
+		!strings.Contains(stderr.String(), "create submits only the new report") {
 		t.Fatalf("submit rejection = %s", stderr.String())
 	}
 }
@@ -39,6 +47,63 @@ func TestCreateDraftRequiresExplicitInputs(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "requires exactly one of --har or --session") {
 		t.Fatalf("stderr = %s", stderr.String())
+	}
+}
+
+func TestCreateReportFailureWarnsUncertainUsersNotToRetry(t *testing.T) {
+	t.Parallel()
+
+	uncertain := func(cause error) error {
+		return errors.Join(expense.ErrOperationUncertain, cause)
+	}
+	tests := []struct {
+		name         string
+		harPath      string
+		submit       bool
+		operationErr error
+		wantOutcome  string
+		wantWarning  string
+	}{
+		{
+			name: "direct HAR uncertain submit", harPath: "capture.har", submit: true,
+			operationErr: uncertain(errors.New("response verification failed")),
+			wantOutcome:  "created or submitted",
+			wantWarning:  "do not retry with the same HAR",
+		},
+		{
+			name: "named session late authentication failure", submit: true,
+			operationErr: uncertain(expense.ErrAuthenticationExpired),
+			wantOutcome:  "created or submitted",
+			wantWarning:  "do not re-import and retry this expense operation",
+		},
+		{
+			name: "named session early authentication failure", submit: true,
+			operationErr: expense.ErrAuthenticationExpired,
+		},
+		{
+			name: "direct HAR draft uncertainty", harPath: "capture.har",
+			operationErr: uncertain(errors.New("save response failed")),
+			wantOutcome:  "created or saved",
+			wantWarning:  "do not retry with the same HAR",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var stderr bytes.Buffer
+			writeCreateReportOperationFailure(&stderr, test.harPath, test.submit, test.operationErr, nil)
+
+			output := stderr.String()
+			if test.wantWarning == "" {
+				if strings.Contains(output, "may already have been") {
+					t.Fatalf("unexpected uncertainty warning: %q", output)
+				}
+				return
+			}
+			if !strings.Contains(output, "may already have been "+test.wantOutcome) || !strings.Contains(output, test.wantWarning) {
+				t.Fatalf("stderr = %q, want warning %q", output, test.wantWarning)
+			}
+		})
 	}
 }
 
@@ -75,7 +140,7 @@ func TestAttachReceiptRequiresExplicitInputs(t *testing.T) {
 	}
 }
 
-func TestCreateDraftWithReceiptRequiresExplicitInputs(t *testing.T) {
+func TestLegacyCreateDraftWithReceiptRequiresExplicitInputs(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer

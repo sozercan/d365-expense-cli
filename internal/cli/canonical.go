@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -20,7 +22,7 @@ type canonicalCLI struct {
 	NoColor   bool             `name:"no-color" env:"NO_COLOR" help:"Disable colored output."`
 	Version   kong.VersionFlag `name:"version" help:"Print version and exit."`
 
-	Create     createCommand  `cmd:"" help:"Create and save an unsubmitted expense report."`
+	Create     createCommand  `cmd:"" help:"Create and submit an expense report; use --draft to save without submitting."`
 	Receipt    receiptCommand `cmd:"" help:"Manage receipts on existing Draft reports."`
 	Session    sessionCommand `cmd:"" help:"Manage imported Dynamics sessions."`
 	HAR        harCommand     `cmd:"" name:"har" help:"Inspect or capture private HAR files."`
@@ -41,7 +43,7 @@ func (source profileSource) validate() error {
 
 type createCommand struct {
 	profileSource      `embed:""`
-	Draft              bool     `name:"draft" required:"" help:"Required safety acknowledgement: create a Draft and never submit it."`
+	Draft              bool     `name:"draft" help:"Save and close as a Draft instead of submitting."`
 	Purpose            string   `name:"purpose" required:"" help:"Expense report purpose/title."`
 	Receipts           []string `name:"receipt" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in attachment order."`
 	ReceiptNote        string   `name:"receipt-note" help:"Notes applied to every receipt."`
@@ -50,9 +52,6 @@ type createCommand struct {
 }
 
 func (command *createCommand) Validate() error {
-	if !command.Draft {
-		return errors.New("--draft is required")
-	}
 	if err := command.profileSource.validate(); err != nil {
 		return err
 	}
@@ -154,32 +153,32 @@ type commandRuntime struct {
 }
 
 type legacyRunners struct {
-	createDraft             func([]string, io.Writer, io.Writer) int
-	createDraftWithReceipts func([]string, io.Writer, io.Writer) int
-	attachReceipt           func([]string, io.Writer, io.Writer) int
-	sessionImport           func([]string, io.Writer, io.Writer) int
-	sessionImportCDP        func([]string, io.Writer, io.Writer) int
-	sessionList             func([]string, io.Writer, io.Writer) int
-	sessionInspect          func([]string, io.Writer, io.Writer) int
-	sessionRemove           func([]string, io.Writer, io.Writer) int
-	sessionUnlock           func([]string, io.Writer, io.Writer) int
-	harInspect              func([]string, io.Writer, io.Writer) int
-	harCapture              func([]string, io.Writer, io.Writer) int
+	createReport             func([]string, io.Writer, io.Writer) int
+	createReportWithReceipts func([]string, io.Writer, io.Writer) int
+	attachReceipt            func([]string, io.Writer, io.Writer) int
+	sessionImport            func([]string, io.Writer, io.Writer) int
+	sessionImportCDP         func([]string, io.Writer, io.Writer) int
+	sessionList              func([]string, io.Writer, io.Writer) int
+	sessionInspect           func([]string, io.Writer, io.Writer) int
+	sessionRemove            func([]string, io.Writer, io.Writer) int
+	sessionUnlock            func([]string, io.Writer, io.Writer) int
+	harInspect               func([]string, io.Writer, io.Writer) int
+	harCapture               func([]string, io.Writer, io.Writer) int
 }
 
 func defaultLegacyRunners() legacyRunners {
 	return legacyRunners{
-		createDraft:             runCreateDraft,
-		createDraftWithReceipts: runCreateDraftWithReceipts,
-		attachReceipt:           runAttachReceipt,
-		sessionImport:           runSessionImport,
-		sessionImportCDP:        runSessionImportCDP,
-		sessionList:             runSessionList,
-		sessionInspect:          runSessionInspect,
-		sessionRemove:           runSessionRemove,
-		sessionUnlock:           runSessionUnlock,
-		harInspect:              runInspect,
-		harCapture:              runCaptureDraft,
+		createReport:             runCreateDraft,
+		createReportWithReceipts: runCreateDraftWithReceipts,
+		attachReceipt:            runAttachReceipt,
+		sessionImport:            runSessionImport,
+		sessionImportCDP:         runSessionImportCDP,
+		sessionList:              runSessionList,
+		sessionInspect:           runSessionInspect,
+		sessionRemove:            runSessionRemove,
+		sessionUnlock:            runSessionUnlock,
+		harInspect:               runInspect,
+		harCapture:               runCaptureDraft,
 	}
 }
 
@@ -216,12 +215,15 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	}
 	args := sourceArgs(command.profileSource)
 	args = append(args, "--purpose", command.Purpose)
+	if !command.Draft {
+		args = append(args, "--submit")
+	}
 	if len(command.Receipts) == 0 {
 		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second).String())
 		if !command.DryRun {
 			args = append(args, "--execute")
 		}
-		return invokeLegacy(rt.runners.createDraft, args, rt)
+		return invokeLegacy(rt.runners.createReport, args, rt)
 	}
 	args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 120*time.Second).String())
 	for _, receipt := range command.Receipts {
@@ -236,7 +238,7 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	if !command.DryRun {
 		args = append(args, "--execute")
 	}
-	return invokeLegacy(rt.runners.createDraftWithReceipts, args, rt)
+	return invokeLegacy(rt.runners.createReportWithReceipts, args, rt)
 }
 
 func (command *receiptAttachCommand) Run(rt *commandRuntime) error {
@@ -325,7 +327,7 @@ func runCanonicalWithRunners(args []string, stdout, stderr io.Writer, runners le
 	model := &canonicalCLI{}
 	parser, err := kong.New(model,
 		kong.Name("d365-expense"),
-		kong.Description("Create and manage unsubmitted Dynamics 365 expense Drafts. There is no submit command."),
+		kong.Description("Create and submit Dynamics 365 expense reports; use --draft to save without submitting."),
 		kong.Vars{"version": version},
 		kong.Writers(stdout, stderr),
 		kong.Exit(func(code int) { panic(kongExitSignal{code: code}) }),
@@ -408,6 +410,9 @@ func legacyReplacement(args []string) string {
 	}
 	switch args[0] {
 	case "create-draft", "create-draft-with-receipt", "create-draft-with-receipts":
+		if legacySubmitRequested(args) {
+			return "d365-expense create"
+		}
 		return "d365-expense create --draft"
 	case "attach-receipt":
 		return "d365-expense receipt attach --draft"
@@ -420,6 +425,28 @@ func legacyReplacement(args []string) string {
 	default:
 		return "d365-expense --help"
 	}
+}
+
+func legacySubmitRequested(args []string) bool {
+	requested := false
+	for _, arg := range args[1:] {
+		if arg == "--" {
+			break
+		}
+		name, value, hasValue := strings.Cut(arg, "=")
+		if name != "--submit" && name != "-submit" {
+			continue
+		}
+		if !hasValue {
+			requested = true
+			continue
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err == nil {
+			requested = parsed
+		}
+	}
+	return requested
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {

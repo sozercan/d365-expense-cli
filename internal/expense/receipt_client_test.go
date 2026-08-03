@@ -314,6 +314,35 @@ func TestAttachReceiptUsesFreshDynamicStateAndStreamsExactMultipart(t *testing.T
 	}
 }
 
+func TestAttachReceiptDraftIgnoresIrrelevantSubmitButtonMetadata(t *testing.T) {
+	t.Parallel()
+
+	server := receiptFailureServer(t, "partial-submit-button")
+	defer server.Close()
+
+	client, err := expense.NewReceiptClient(validReceiptProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewReceiptClient() error = %v", err)
+	}
+	request := expense.AttachReceiptRequest{
+		ReportNumber: "RPT-0001",
+		Receipt: expense.ReceiptInput{
+			Filename: "receipt.png", MediaType: "image/png", Size: 1,
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader("x")), nil
+			},
+		},
+	}
+
+	result, err := client.AttachReceipt(context.Background(), request)
+	if err != nil {
+		t.Fatalf("AttachReceipt() error = %v", err)
+	}
+	if !result.SavedAndClosed || result.Status != "Draft" || result.ReceiptCount != 3 {
+		t.Fatalf("AttachReceipt() = %#v", result)
+	}
+}
+
 func TestAttachReceiptRejectsInputWithoutOpeningReader(t *testing.T) {
 	t.Parallel()
 	client, err := expense.NewReceiptClient(validReceiptProfile("https://example.test"))
@@ -592,10 +621,16 @@ func receiptFailureServer(t *testing.T, mode string) *httptest.Server {
 			if mode == "count" {
 				count = "2"
 			}
-			writeEnvelope(t, w, responseEnvelope(7, last, 57,
+			interactions := []json.RawMessage{
 				receiptViewModel("details", map[string]any{"Id": "count", "Name": dynamics.ControlReceiptCount, "TypeName": "Integer", "ValueProperties": map[string]any{"Value": count}}),
 				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "details", "Descriptor": map[string]any{"Id": "model", "Properties": map[string]any{"expenseReportStatus_dataMethod": "Draft"}}}),
-			))
+			}
+			if mode == "partial-submit-button" {
+				interactions = append(interactions, receiptViewModel("details", map[string]any{
+					"Id": "tenant-submit", "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+				}))
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, 57, interactions...))
 		case 9:
 			writeEnvelope(t, w, responseEnvelope(7, last, 58))
 		default:

@@ -29,6 +29,8 @@ type combinedWorkflowOptions struct {
 	activatedStatus            string
 	postReceiptStatus          string
 	afterReceiptCount          int
+	activatedSubmitButton      map[string]any
+	confirmationSubmitButton   map[string]any
 }
 
 type combinedWorkflowObservation struct {
@@ -40,13 +42,28 @@ type combinedWorkflowObservation struct {
 	finalSave    bool
 }
 
-func TestCreateDraftWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing.T) {
+func draftReportWithReceiptRequest(purpose, notes string, contract expense.ReceiptUploadContract, receipt expense.ReceiptInput) expense.CreateReportWithReceiptsRequest {
+	return expense.CreateReportWithReceiptsRequest{
+		Purpose:        purpose,
+		UploadContract: contract,
+		FinalAction:    expense.ReportFinalActionSaveDraft,
+		Receipts: []expense.CreateReportReceiptInput{{
+			Notes:   notes,
+			Receipt: receipt,
+		}},
+	}
+}
+
+func TestCreateReportWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing.T) {
 	fileBytes := []byte("\x89PNG\r\n\x1a\nsynthetic-receipt")
 	server, observed := newCombinedWorkflowServer(t, combinedWorkflowOptions{
 		createStatus:           "Draft",
 		includeActivatedButton: true,
-		postReceiptStatus:      "Draft",
-		afterReceiptCount:      1,
+		activatedSubmitButton: map[string]any{
+			"Id": "activated-tenant-submit", "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		},
+		postReceiptStatus: "Draft",
+		afterReceiptCount: 1,
 	}, fileBytes)
 	defer server.Close()
 
@@ -63,11 +80,11 @@ func TestCreateDraftWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing.
 	}
 
 	opened := 0
-	request := expense.CreateDraftWithReceiptRequest{
-		Purpose:        "CLI draft with test receipt",
-		Notes:          "Test receipt",
-		UploadContract: contract,
-		Receipt: expense.ReceiptInput{
+	request := draftReportWithReceiptRequest(
+		"CLI draft with test receipt",
+		"Test receipt",
+		contract,
+		expense.ReceiptInput{
 			Filename:  "test-receipt.png",
 			MediaType: "image/png",
 			Size:      int64(len(fileBytes)),
@@ -76,13 +93,13 @@ func TestCreateDraftWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing.
 				return io.NopCloser(bytes.NewReader(fileBytes)), nil
 			},
 		},
-	}
+	)
 
-	plan, err := client.PlanCreateDraftWithReceipt(request)
+	plan, err := client.PlanCreateReportWithReceipts(request)
 	if err != nil {
-		t.Fatalf("PlanCreateDraftWithReceipt() error = %v", err)
+		t.Fatalf("PlanCreateReportWithReceipts() error = %v", err)
 	}
-	if plan.Purpose != request.Purpose || plan.Receipt.Filename != request.Receipt.Filename || plan.RequestCount != 12 {
+	if plan.Purpose != request.Purpose || plan.Receipts[0].Receipt.Filename != request.Receipts[0].Receipt.Filename || plan.RequestCount != 12 {
 		t.Fatalf("plan = %#v", plan)
 	}
 	if opened != 0 || observed.requestCount != 0 {
@@ -95,21 +112,24 @@ func TestCreateDraftWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing.
 		}
 	}
 
-	result, err := client.CreateDraftWithReceipt(context.Background(), request)
+	result, err := client.CreateReportWithReceipts(context.Background(), request)
 	if err != nil {
-		t.Fatalf("CreateDraftWithReceipt() error = %v", err)
+		t.Fatalf("CreateReportWithReceipts() error = %v", err)
 	}
-	want := expense.CreateDraftWithReceiptResult{
+	want := expense.CreateReportWithReceiptsResult{
 		Purpose:            request.Purpose,
 		ReportNumber:       combinedReportNumber,
 		Status:             "Draft",
 		ReceiptCountBefore: 0,
 		ReceiptCountAfter:  1,
-		Attached:           expense.AttachedReceipt{Filename: "test-receipt.png", Size: int64(len(fileBytes))},
-		SavedAndClosed:     true,
+		Receipts: []expense.CreateReportReceiptResult{{
+			Attached:          expense.AttachedReceipt{Filename: "test-receipt.png", Size: int64(len(fileBytes))},
+			ReceiptCountAfter: 1,
+		}},
+		SavedAndClosed: true,
 	}
-	if result != want {
-		t.Fatalf("CreateDraftWithReceipt() = %#v, want %#v", result, want)
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("CreateReportWithReceipts() = %#v, want %#v", result, want)
 	}
 	if opened != 1 || observed.requestCount != 12 || !observed.finalSave {
 		t.Fatalf("opened=%d requests=%d finalSave=%t", opened, observed.requestCount, observed.finalSave)
@@ -157,7 +177,54 @@ func TestCreateDraftWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing.
 	}
 }
 
-func TestCreateDraftWithReceiptRequiresDraftAndActivatedNewReceiptButton(t *testing.T) {
+func TestCreateReportWithReceiptDraftIgnoresIrrelevantSubmitButtonMetadata(t *testing.T) {
+	fileBytes := []byte("\x89PNG\r\n\x1a\ntenant-submit-metadata")
+	server, observed := newCombinedWorkflowServer(t, combinedWorkflowOptions{
+		createStatus:           "Draft",
+		includeActivatedButton: true,
+		postReceiptStatus:      "Draft",
+		afterReceiptCount:      1,
+		confirmationSubmitButton: map[string]any{
+			"Id": "tenant-submit", "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		},
+	}, fileBytes)
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	contract, err := expense.ReceiptUploadContractFromProfile(&capture.ReceiptProfile{
+		Upload: validReceiptProfile("https://unused.invalid").Upload,
+	})
+	if err != nil {
+		t.Fatalf("ReceiptUploadContractFromProfile() error = %v", err)
+	}
+	request := draftReportWithReceiptRequest(
+		"Draft with tenant-specific submit metadata",
+		"Test receipt",
+		contract,
+		expense.ReceiptInput{
+			Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)),
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(fileBytes)), nil
+			},
+		},
+	)
+
+	result, err := client.CreateReportWithReceipts(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CreateReportWithReceipts() error = %v", err)
+	}
+	if !result.SavedAndClosed || result.Submitted || result.Status != "Draft" || result.ReceiptCountAfter != 1 {
+		t.Fatalf("CreateReportWithReceipts() = %#v", result)
+	}
+	if observed.requestCount != 12 || !observed.finalSave {
+		t.Fatalf("requests=%d finalSave=%t", observed.requestCount, observed.finalSave)
+	}
+}
+
+func TestCreateReportWithReceiptRequiresDraftAndActivatedNewReceiptButton(t *testing.T) {
 	fileBytes := []byte("\x89PNG\r\n\x1a\nfixture")
 	tests := []struct {
 		name         string
@@ -203,13 +270,12 @@ func TestCreateDraftWithReceiptRequiresDraftAndActivatedNewReceiptButton(t *test
 				t.Fatal(err)
 			}
 			opened := 0
-			_, err = client.CreateDraftWithReceipt(context.Background(), expense.CreateDraftWithReceiptRequest{
-				Purpose: "Draft invariant test", UploadContract: contract,
-				Receipt: expense.ReceiptInput{Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)), Open: func() (io.ReadCloser, error) {
+			request := draftReportWithReceiptRequest("Draft invariant test", "", contract,
+				expense.ReceiptInput{Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)), Open: func() (io.ReadCloser, error) {
 					opened++
 					return io.NopCloser(bytes.NewReader(fileBytes)), nil
-				}},
-			})
+				}})
+			_, err = client.CreateReportWithReceipts(context.Background(), request)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v, want substring %q", err, test.wantError)
 			}
@@ -220,7 +286,7 @@ func TestCreateDraftWithReceiptRequiresDraftAndActivatedNewReceiptButton(t *test
 	}
 }
 
-func TestCreateDraftWithReceiptDoesNotSaveUntilDraftCountIncreaseIsVerified(t *testing.T) {
+func TestCreateReportWithReceiptDoesNotSaveUntilDraftCountIncreaseIsVerified(t *testing.T) {
 	fileBytes := []byte("\x89PNG\r\n\x1a\nfixture")
 	tests := []struct {
 		name       string
@@ -246,12 +312,11 @@ func TestCreateDraftWithReceiptDoesNotSaveUntilDraftCountIncreaseIsVerified(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.CreateDraftWithReceipt(context.Background(), expense.CreateDraftWithReceiptRequest{
-				Purpose: "Post-attachment invariant test", UploadContract: contract,
-				Receipt: expense.ReceiptInput{Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)), Open: func() (io.ReadCloser, error) {
+			request := draftReportWithReceiptRequest("Post-attachment invariant test", "", contract,
+				expense.ReceiptInput{Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)), Open: func() (io.ReadCloser, error) {
 					return io.NopCloser(bytes.NewReader(fileBytes)), nil
-				}},
-			})
+				}})
+			_, err = client.CreateReportWithReceipts(context.Background(), request)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v, want substring %q", err, test.wantError)
 			}
@@ -267,7 +332,7 @@ func TestCreateDraftWithReceiptDoesNotSaveUntilDraftCountIncreaseIsVerified(t *t
 	}
 }
 
-func TestCreateDraftWithReceiptRejectsInsufficientSequenceHeadroomBeforeNetwork(t *testing.T) {
+func TestCreateReportWithReceiptRejectsInsufficientSequenceHeadroomBeforeNetwork(t *testing.T) {
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		requests++
@@ -284,13 +349,12 @@ func TestCreateDraftWithReceiptRejectsInsufficientSequenceHeadroomBeforeNetwork(
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.CreateDraftWithReceipt(context.Background(), expense.CreateDraftWithReceiptRequest{
-		Purpose: "Sequence headroom test", UploadContract: contract,
-		Receipt: expense.ReceiptInput{
+	request := draftReportWithReceiptRequest("Sequence headroom test", "", contract,
+		expense.ReceiptInput{
 			Filename: "receipt.png", MediaType: "image/png", Size: 1,
 			Open: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("x")), nil },
-		},
-	})
+		})
+	_, err = client.CreateReportWithReceipts(context.Background(), request)
 	if err == nil || !strings.Contains(err.Error(), "headroom") {
 		t.Fatalf("error = %v, want headroom error", err)
 	}
@@ -433,6 +497,9 @@ func newCombinedWorkflowServer(t *testing.T, options combinedWorkflowOptions, fi
 					}},
 				}))
 			}
+			if options.activatedSubmitButton != nil {
+				interactions = append(interactions, receiptViewModel("new-details", options.activatedSubmitButton))
+			}
 			writeEnvelope(t, w, responseEnvelope(7, last, 53, interactions...))
 		case 4:
 			assertOpenReceiptRequest(t, request, "new-details", "activated-new-receipt")
@@ -486,13 +553,17 @@ func newCombinedWorkflowServer(t *testing.T, options combinedWorkflowOptions, fi
 			writeEnvelope(t, w, responseEnvelope(7, last, 59))
 		case 11:
 			assertSingleClick(t, request, "receipt-dialog", "receipt-ok")
-			writeEnvelope(t, w, responseEnvelope(7, last, 60,
+			interactions := []json.RawMessage{
 				receiptViewModel("new-details", map[string]any{"Id": "after-count", "Name": dynamics.ControlReceiptCount, "TypeName": "Integer", "ValueProperties": map[string]any{"Value": fmt.Sprint(options.afterReceiptCount)}}),
 				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "new-details", "Descriptor": map[string]any{"Id": "after-record", "Properties": map[string]any{
 					"ExpNumber_field": combinedReportNumber, "expenseReportStatus_dataMethod": options.postReceiptStatus,
 				}}}),
 				receiptViewModel("new-details", map[string]any{"Id": "save-after-receipt", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"}),
-			))
+			}
+			if options.confirmationSubmitButton != nil {
+				interactions = append(interactions, receiptViewModel("new-details", options.confirmationSubmitButton))
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, 60, interactions...))
 		case 12:
 			assertSingleClick(t, request, "new-details", "save-after-receipt")
 			observed.finalSave = true

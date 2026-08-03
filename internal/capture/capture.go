@@ -320,7 +320,7 @@ func validateSessionProfile(session SessionProfile) error {
 		return errors.New("capture next client sequence is invalid")
 	}
 	if session.NextClientSequence > math.MaxInt64-3 {
-		return errors.New("capture client sequence lacks headroom for draft creation")
+		return errors.New("capture client sequence lacks headroom for report creation")
 	}
 	return validateCredentials(session.RequestHeaders, session.Cookies)
 }

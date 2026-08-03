@@ -1,4 +1,5 @@
-// Package expense creates and saves unsubmitted Dynamics 365 expense drafts.
+// Package expense creates Dynamics 365 expense reports and either saves them as
+// Drafts or explicitly submits them.
 package expense
 
 import (
@@ -30,19 +31,25 @@ var errRedirect = errors.New("expense: redirects are not allowed")
 // ErrAuthenticationExpired indicates that Dynamics redirected to sign-in or rejected the captured credentials.
 var ErrAuthenticationExpired = errRedirect
 
-// Plan is a credential-free description of a draft creation operation.
-type Plan struct {
-	Purpose      string
-	RequestCount int
-	Actions      []string
+// ErrOperationUncertain marks an error returned after a request may already
+// have created or mutated an expense report. Callers must not treat a nested
+// authentication failure as proof that the remote mutation did not happen.
+var ErrOperationUncertain = errors.New("expense: remote operation outcome is uncertain")
+
+type operationUncertainError struct {
+	cause error
 }
 
-// DraftReport contains only the safe result of creating and closing a draft.
-type DraftReport struct {
-	Purpose        string
-	ReportNumber   string
-	Status         string
-	SavedAndClosed bool
+func (err *operationUncertainError) Error() string { return err.cause.Error() }
+func (err *operationUncertainError) Unwrap() []error {
+	return []error{ErrOperationUncertain, err.cause}
+}
+
+func markOperationUncertain(err error) error {
+	if err == nil || errors.Is(err, ErrOperationUncertain) {
+		return err
+	}
+	return &operationUncertainError{cause: err}
 }
 
 // Option is a sealed Client configuration option.
@@ -71,7 +78,7 @@ func WithHTTPClient(client *http.Client) Option {
 	return httpClientOption{client: client}
 }
 
-// Client is a draft-only, stateful Dynamics expense client.
+// Client is a narrowly allowlisted, stateful Dynamics expense client.
 type Client struct {
 	mu sync.Mutex
 
@@ -203,41 +210,63 @@ func (client *Client) BootstrapProfile() (*capture.BootstrapProfile, error) {
 	return client.SnapshotBootstrapProfile()
 }
 
-// PlanCreateDraft returns an offline, credential-free operation plan.
-func (client *Client) PlanCreateDraft(purpose string) (Plan, error) {
-	if err := validatePurpose(purpose); err != nil {
-		return Plan{}, err
+// PlanCreateReport returns an offline, credential-free operation plan.
+func (client *Client) PlanCreateReport(request CreateReportRequest) (CreateReportPlan, error) {
+	if err := validatePurpose(request.Purpose); err != nil {
+		return CreateReportPlan{}, err
 	}
-	return Plan{
-		Purpose:      purpose,
+	if err := validateReportFinalAction(request.FinalAction); err != nil {
+		return CreateReportPlan{}, err
+	}
+	finalAction := "save and close draft"
+	if request.FinalAction == ReportFinalActionSubmit {
+		finalAction = "submit the new report using its exact discovered SubmitButton"
+	}
+	return CreateReportPlan{
+		Purpose:      request.Purpose,
 		RequestCount: 3,
 		Actions: []string{
 			"open new expense report",
 			"set purpose and create draft",
-			"save and close draft",
+			finalAction,
 		},
 	}, nil
 }
 
-// CreateDraft creates an expense report, verifies Draft status, and clicks only
-// the response model's SaveAndClose control.
-func (client *Client) CreateDraft(ctx context.Context, purpose string) (DraftReport, error) {
+// CreateReport creates a report and performs its explicit final action.
+func (client *Client) CreateReport(ctx context.Context, request CreateReportRequest) (ReportResult, error) {
 	if ctx == nil {
-		return DraftReport{}, errors.New("expense: context is nil")
+		return ReportResult{}, errors.New("expense: context is nil")
 	}
-	if err := validatePurpose(purpose); err != nil {
-		return DraftReport{}, err
+	if err := validatePurpose(request.Purpose); err != nil {
+		return ReportResult{}, err
+	}
+	if err := validateReportFinalAction(request.FinalAction); err != nil {
+		return ReportResult{}, err
 	}
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if client.nextClientSequence > math.MaxInt64-3 {
-		return DraftReport{}, errors.New("expense: client sequence lacks headroom for draft creation")
+		return ReportResult{}, errors.New("expense: client sequence lacks headroom for report creation")
 	}
 
-	draft, err := client.createDraftDetails(ctx, purpose)
+	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
-		return DraftReport{}, err
+		return ReportResult{}, err
+	}
+
+	if request.FinalAction == ReportFinalActionSubmit {
+		status, err := client.submitOpenDraft(ctx, draft.reportNumber, draft.detailsRootID, draft.submitButton)
+		if err != nil {
+			return ReportResult{}, markOperationUncertain(err)
+		}
+		return ReportResult{
+			Purpose:      request.Purpose,
+			ReportNumber: draft.reportNumber,
+			Status:       status,
+			Submitted:    true,
+		}, nil
 	}
 
 	save := dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, draft.detailsRootID, draft.saveAndCloseID)
@@ -245,11 +274,11 @@ func (client *Client) CreateDraft(ctx context.Context, purpose string) (DraftRep
 		DetailsRootID:  draft.detailsRootID,
 		SaveAndCloseID: draft.saveAndCloseID,
 	}); err != nil {
-		return DraftReport{}, fmt.Errorf("expense: save and close draft: %w", err)
+		return ReportResult{}, markOperationUncertain(fmt.Errorf("expense: save and close draft: %w", err))
 	}
 
-	return DraftReport{
-		Purpose:        purpose,
+	return ReportResult{
+		Purpose:        request.Purpose,
 		ReportNumber:   draft.reportNumber,
 		Status:         draft.status,
 		SavedAndClosed: true,
@@ -262,12 +291,19 @@ type openDraftDetails struct {
 	status         string
 	detailsRootID  string
 	saveAndCloseID string
+	submitButton   dynamics.ModelNode
 }
 
 // createDraftDetails creates a Draft and leaves its details form open. The
 // caller must hold client.mu and reserve enough sequence headroom for its
 // remaining workflow.
-func (client *Client) createDraftDetails(ctx context.Context, purpose string) (openDraftDetails, error) {
+func (client *Client) createDraftDetails(ctx context.Context, purpose string) (result openDraftDetails, err error) {
+	creationAttempted := false
+	defer func() {
+		if creationAttempted && err != nil {
+			err = markOperationUncertain(err)
+		}
+	}()
 	openSequence := client.nextClientSequence
 	open := dynamics.BuildOpenNewExpenseReportMessage(openSequence, client.workspaceRootID, client.createButtonID)
 	openBody, err := client.send(ctx, []dynamics.Message{open}, dynamics.DraftCommandTargets{
@@ -294,6 +330,7 @@ func (client *Client) createDraftDetails(ctx context.Context, purpose string) (o
 	setSequence := client.nextClientSequence
 	set := dynamics.BuildSetValueMessage(setSequence, dialog.ID, purposeControl.ID, purpose, "", "")
 	invoke := dynamics.BuildInvokeDefaultButtonMessage(setSequence+1, dialog.ID)
+	creationAttempted = true
 	createBody, err := client.send(ctx, []dynamics.Message{set, invoke}, dynamics.DraftCommandTargets{
 		DialogRootID:  dialog.ID,
 		NamePurposeID: purposeControl.ID,
@@ -320,6 +357,7 @@ func (client *Client) createDraftDetails(ctx context.Context, purpose string) (o
 	if !strings.EqualFold(strings.TrimSpace(createModel.Status), "Draft") {
 		return openDraftDetails{}, fmt.Errorf("expense: report status is not Draft: %q", createModel.Status)
 	}
+	submitButton, _ := createModel.FindControlInRoot(dynamics.ControlSubmitButton, details.ID)
 
 	return openDraftDetails{
 		responseBody:   createBody,
@@ -327,7 +365,53 @@ func (client *Client) createDraftDetails(ctx context.Context, purpose string) (o
 		status:         createModel.Status,
 		detailsRootID:  details.ID,
 		saveAndCloseID: saveAndClose.ID,
+		submitButton:   submitButton,
 	}, nil
+}
+
+func (client *Client) submitOpenDraft(ctx context.Context, reportNumber, detailsRootID string, submitButton dynamics.ModelNode) (string, error) {
+	if err := dynamics.ValidateSubmitButton(submitButton, detailsRootID); err != nil {
+		return "", fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)
+	}
+	submit := dynamics.BuildSubmitClickMessage(client.nextClientSequence, detailsRootID, submitButton.ID)
+	body, err := client.sendValidated(ctx, []dynamics.Message{submit}, func(envelope dynamics.Envelope) error {
+		return dynamics.ValidateSubmitCommands(envelope, dynamics.SubmitCommandTargets{
+			DetailsRootID:  detailsRootID,
+			SubmitButtonID: submitButton.ID,
+		})
+	})
+	if err != nil {
+		return "", fmt.Errorf("expense: submit report: %w", err)
+	}
+
+	status, found, err := submittedReportStatus(body, reportNumber)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", errors.New("expense: submit response did not verify the created report's new status")
+	}
+	if isDraftStatus(status) {
+		return "", errors.New("expense: submit response still reports the created report as Draft")
+	}
+	if !isSubmittedStatus(status) {
+		return "", fmt.Errorf("expense: submit response did not affirmatively report the created report as Submitted: %q", status)
+	}
+	model, err := dynamics.DiscoverResponseModel(body)
+	if err != nil {
+		return "", err
+	}
+	workspace, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace)
+	if !ok || workspace.ID == "" {
+		return "", errors.New("expense: submit response did not uniquely restore the Expense workspace")
+	}
+	newReport, ok := model.FindControlInRoot(dynamics.SelectedControlNewExpenseReportReportsTab, workspace.ID)
+	if !ok || newReport.ID == "" {
+		return "", errors.New("expense: submit response did not restore the New expense report control")
+	}
+	client.workspaceRootID = workspace.ID
+	client.createButtonID = newReport.ID
+	return status, nil
 }
 
 func (client *Client) send(ctx context.Context, messages []dynamics.Message, targets dynamics.DraftCommandTargets) ([]byte, error) {

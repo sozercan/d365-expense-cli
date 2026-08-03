@@ -26,6 +26,10 @@ The repository is now `d365-expense-cli`, and the canonical binary is
 | Omit `--execute` | Use `--dry-run` |
 | `--name work` | Positional session name: `work` |
 
+There is no standalone legacy submit command. Canonical `create` submits by
+default; add `--draft` to retain the old save-without-submitting outcome. Legacy
+`--execute` keeps its historical Draft behavior.
+
 ## Environment variables
 
 Canonical variables use the `D365_EXPENSE_` prefix. Legacy `MSEXPENSE_*`
@@ -34,8 +38,8 @@ variables remain temporary lower-precedence aliases.
 ## Behavioral difference
 
 Legacy mutation commands remain dry-run-by-default and require `--execute`.
-Canonical commands execute by default and require `--draft`; use `--dry-run` for
-preview.
+Canonical `create` executes and submits by default; use `--draft` to save
+without submitting or `--dry-run` to preview without network requests.
 
 The deprecated `msexpense` wrapper and flat commands emit warnings. They will be
 removed in a future breaking release.

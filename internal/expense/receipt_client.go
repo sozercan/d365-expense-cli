@@ -62,6 +62,7 @@ type ReceiptClient struct {
 	detailsRootID      string
 	addReceiptButtonID string
 	saveAndCloseID     string
+	submitButton       dynamics.ModelNode
 
 	maxChunkSize               int64
 	maxSupportedSingleFileSize int64
@@ -416,6 +417,13 @@ func (client *ReceiptClient) attachReceiptLocked(ctx context.Context, request At
 			return AttachReceiptResult{}, errors.New("expense: dynamic SaveAndClose control is outside the captured report")
 		}
 		client.saveAndCloseID = okModel.SaveAndClose.ID
+	}
+	if submitButton, ok := okModel.FindSubmitButtonInRoot(client.detailsRootID); ok {
+		// Receipt attachment is shared by draft-only and submit workflows. Merge
+		// the current report's incremental descriptor, but defer strict trust
+		// validation until the caller actually chooses Submit; draft-only
+		// SaveAndClose must not depend on SubmitButton metadata.
+		client.submitButton = dynamics.MergeModelNode(client.submitButton, submitButton)
 	}
 	if client.saveAndCloseID == "" {
 		return AttachReceiptResult{}, errors.New("expense: SaveAndClose control is missing")

@@ -128,12 +128,16 @@ All local files are validated before the first network request. On a partial
 failure the CLI stops, does not attach later files, does not invoke
 `SaveAndClose`, and does not retry or compensate automatically.
 
-The implementation has no Submit operation. Receipt validation rejects submit,
-workflow, posting, approval, and recall commands at every RCM stage.
+Receipt attachment itself has no Submit operation. Receipt validation rejects
+submit, workflow, posting, approval, and recall commands at every RCM stage.
+During the default `create` flow, the receipt workflow must finish and verify
+every attachment before control returns to the separate, exact submission
+validator. `--draft` selects `SaveAndClose` instead.
 
 ## Compatibility
 
 The old `msexpense create-draft-with-receipt`,
 `create-draft-with-receipts`, and `attach-receipt` forms remain temporary
 aliases. Legacy `--file` and `--notes` map to canonical `--receipt` and
-`--receipt-note`. Compatibility does not alter the Draft-only safety boundary.
+`--receipt-note`. Compatibility does not broaden the receipt operation's
+Draft-only safety boundary or imply submission intent.

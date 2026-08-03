@@ -17,12 +17,17 @@ import (
 type ModelNode struct {
 	ID                        string
 	Name                      string
+	TypeName                  string
 	RootID                    string
 	Properties                map[string]json.RawMessage
 	ValueProperties           map[string]json.RawMessage
 	SerializedValueProperties map[string]json.RawMessage
+	Commands                  map[string]json.RawMessage
 	Path                      []string
 	Raw                       json.RawMessage
+
+	presentFields map[string]bool
+	resetFields   map[string]bool
 }
 
 // ResponseModel is the useful subset discovered from a Dynamics response.
@@ -32,6 +37,9 @@ type ResponseModel struct {
 	Controls     map[string]ModelNode
 	ReportNumber string
 	Status       string
+
+	controlsByRoot map[string]map[string]ModelNode
+	formsByName    map[string]map[string]ModelNode
 }
 
 // DiscoverResponseModel recursively searches any JSON response value. It does
@@ -55,13 +63,17 @@ func DiscoverResponseModel(data []byte) (ResponseModel, error) {
 
 	state := discoveryState{
 		model: ResponseModel{
-			Forms:    make(map[string]ModelNode),
-			Controls: make(map[string]ModelNode),
+			Forms:          make(map[string]ModelNode),
+			Controls:       make(map[string]ModelNode),
+			controlsByRoot: make(map[string]map[string]ModelNode),
+			formsByName:    make(map[string]map[string]ModelNode),
 		},
 		formScores:    make(map[string]int),
+		formIDScores:  make(map[string]map[string]int),
 		controlScores: make(map[string]int),
 	}
 	state.walk(value, nil, "", "")
+	state.preferControlInForm(ControlSubmitButton, FormExpenseReportDetails)
 	state.applyDetailsRecord()
 	return state.model, nil
 }
@@ -86,10 +98,44 @@ func (model ResponseModel) FindForm(name string) (ModelNode, bool) {
 	return node, ok
 }
 
+// FindUniqueForm returns a form only when the response contains one distinct
+// form ID for the exact Name. Repeated deltas for the same ID are allowed;
+// competing roots are ambiguous and fail closed.
+func (model ResponseModel) FindUniqueForm(name string) (ModelNode, bool) {
+	forms := model.formsByName[name]
+	if len(forms) == 1 {
+		for _, form := range forms {
+			return form, true
+		}
+	}
+	if len(forms) > 1 {
+		return ModelNode{}, false
+	}
+	return model.FindForm(name)
+}
+
 // FindControl looks up a recursively discovered control by exact Name.
 func (model ResponseModel) FindControl(name string) (ModelNode, bool) {
 	node, ok := model.Controls[name]
 	return node, ok
+}
+
+// FindControlInRoot looks up a recursively discovered control by exact Name
+// under the selected form/view-model root. Unlike FindControl, it can
+// distinguish same-name controls that belong to different roots.
+func (model ResponseModel) FindControlInRoot(name, rootID string) (ModelNode, bool) {
+	if rootID == "" {
+		return ModelNode{}, false
+	}
+	if controls := model.controlsByRoot[rootID]; controls != nil {
+		if node, ok := controls[name]; ok {
+			return node, true
+		}
+	}
+	// Keep the method useful for ResponseModel values assembled directly by
+	// callers rather than by DiscoverResponseModel.
+	node, ok := model.Controls[name]
+	return node, ok && node.RootID == rootID
 }
 
 // FindModel looks up either a form or a control by exact Name, preferring a
@@ -104,6 +150,7 @@ func (model ResponseModel) FindModel(name string) (ModelNode, bool) {
 type discoveryState struct {
 	model             ResponseModel
 	formScores        map[string]int
+	formIDScores      map[string]map[string]int
 	controlScores     map[string]int
 	report            propertyCandidate
 	status            propertyCandidate
@@ -143,9 +190,9 @@ func (state *discoveryState) walk(value any, path []string, rootID, rootName str
 			score := modelObjectScore(typed, rootID != "")
 			if isForm {
 				node.RootID = id
-				state.keepNode(state.model.Forms, state.formScores, node, score)
+				state.keepForm(node, score)
 			} else {
-				state.keepNode(state.model.Controls, state.controlScores, node, score)
+				state.keepControl(node, score)
 			}
 		}
 		if strings.EqualFold(name, FormExpenseReportDetails) {
@@ -185,6 +232,48 @@ func (state *discoveryState) keepNode(nodes map[string]ModelNode, scores map[str
 	}
 	nodes[node.Name] = node
 	scores[node.Name] = score
+}
+
+func (state *discoveryState) keepForm(node ModelNode, score int) {
+	state.keepNode(state.model.Forms, state.formScores, node, score)
+	if state.model.formsByName[node.Name] == nil {
+		state.model.formsByName[node.Name] = make(map[string]ModelNode)
+	}
+	if state.formIDScores[node.Name] == nil {
+		state.formIDScores[node.Name] = make(map[string]int)
+	}
+	previousScore, exists := state.formIDScores[node.Name][node.ID]
+	if exists && previousScore >= score {
+		return
+	}
+	state.model.formsByName[node.Name][node.ID] = node
+	state.formIDScores[node.Name][node.ID] = score
+}
+
+func (state *discoveryState) keepControl(node ModelNode, score int) {
+	state.keepNode(state.model.Controls, state.controlScores, node, score)
+	if node.RootID == "" {
+		return
+	}
+	if state.model.controlsByRoot[node.RootID] == nil {
+		state.model.controlsByRoot[node.RootID] = make(map[string]ModelNode)
+	}
+	if previous, ok := state.model.controlsByRoot[node.RootID][node.Name]; ok {
+		node = MergeModelNode(previous, node)
+	}
+	state.model.controlsByRoot[node.RootID][node.Name] = node
+}
+
+func (state *discoveryState) preferControlInForm(controlName, formName string) {
+	form, ok := state.model.FindForm(formName)
+	if !ok {
+		return
+	}
+	control, ok := state.model.FindControlInRoot(controlName, form.ID)
+	if !ok {
+		return
+	}
+	state.model.Controls[controlName] = control
 }
 
 func (state *discoveryState) inspectProperties(properties map[string]any, rootName string) {
@@ -451,11 +540,27 @@ func discoverRecordValues(record map[string]any) (string, string) {
 }
 
 func modelNodeFromObject(object map[string]any, name, id, rootID string, path []string) ModelNode {
+	presentFields := make(map[string]bool, len(object))
+	resetFields := make(map[string]bool)
+	for field := range object {
+		presentFields[field] = true
+	}
+	for _, field := range []string{"Properties", "ValueProperties", "SerializedValueProperties", "Commands"} {
+		if value, present := object[field]; present {
+			properties, ok := value.(map[string]any)
+			if !ok || len(properties) == 0 {
+				resetFields[field] = true
+			}
+		}
+	}
 	node := ModelNode{
-		ID:     id,
-		Name:   name,
-		RootID: rootID,
-		Path:   append([]string(nil), path...),
+		ID:            id,
+		Name:          name,
+		TypeName:      stringValue(object["TypeName"]),
+		RootID:        rootID,
+		Path:          append([]string(nil), path...),
+		presentFields: presentFields,
+		resetFields:   resetFields,
 	}
 	if properties, ok := object["Properties"].(map[string]any); ok {
 		node.Properties = rawObject(properties)
@@ -465,6 +570,9 @@ func modelNodeFromObject(object map[string]any, name, id, rootID string, path []
 	}
 	if properties, ok := object["SerializedValueProperties"].(map[string]any); ok {
 		node.SerializedValueProperties = rawObject(properties)
+	}
+	if commands, ok := object["Commands"].(map[string]any); ok {
+		node.Commands = rawObject(commands)
 	}
 	if raw, err := json.Marshal(object); err == nil {
 		node.Raw = raw

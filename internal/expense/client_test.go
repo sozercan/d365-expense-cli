@@ -20,7 +20,7 @@ import (
 
 const processMessagesPath = "/Services/ReliableCommunicationManager.svc/ProcessMessages"
 
-func TestCreateDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
+func TestCreateReportSaveDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
 	t.Parallel()
 
 	var requestNumber atomic.Int32
@@ -152,12 +152,13 @@ func TestCreateDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	plan, err := client.PlanCreateDraft("Conference travel")
+	request := expense.CreateReportRequest{Purpose: "Conference travel", FinalAction: expense.ReportFinalActionSaveDraft}
+	plan, err := client.PlanCreateReport(request)
 	if err != nil {
-		t.Fatalf("PlanCreateDraft() error = %v", err)
+		t.Fatalf("PlanCreateReport() error = %v", err)
 	}
 	if plan.Purpose != "Conference travel" || plan.RequestCount != 3 || requestNumber.Load() != 0 {
-		t.Fatalf("PlanCreateDraft() = %#v, requests = %d", plan, requestNumber.Load())
+		t.Fatalf("PlanCreateReport() = %#v, requests = %d", plan, requestNumber.Load())
 	}
 	planText := fmt.Sprintf("%#v", plan)
 	for _, secret := range []string{"unit-header-secret", "unit-cookie-secret", "captured-workspace-root", server.URL} {
@@ -166,12 +167,12 @@ func TestCreateDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T) {
 		}
 	}
 
-	report, err := client.CreateDraft(context.Background(), "Conference travel")
+	report, err := client.CreateReport(context.Background(), request)
 	if err != nil {
-		t.Fatalf("CreateDraft() error = %v", err)
+		t.Fatalf("CreateReport() error = %v", err)
 	}
-	if want := (expense.DraftReport{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); report != want {
-		t.Fatalf("CreateDraft() = %#v, want %#v", report, want)
+	if want := (expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); report != want {
+		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
 	}
 	if requestNumber.Load() != 3 {
 		t.Fatalf("requests = %d, want 3", requestNumber.Load())
@@ -272,10 +273,155 @@ func mustCommands(t *testing.T, message dynamics.Message) []dynamics.CommandInte
 	return commands
 }
 
-func TestNewRejectsSequenceWithoutDraftHeadroom(t *testing.T) {
+func TestNewRejectsSequenceWithoutReportCreationHeadroom(t *testing.T) {
 	profile := validProfile("https://example.test")
 	profile.Session.NextClientSequence = math.MaxInt64 - 2
 	if _, err := expense.New(profile); err == nil || !strings.Contains(err.Error(), "headroom") {
 		t.Fatalf("New() error = %v, want sequence headroom error", err)
+	}
+}
+
+func TestCreateAndSubmitUsesExactDiscoveredSubmitButton(t *testing.T) {
+	t.Parallel()
+
+	var requestNumber atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request dynamics.Envelope
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		last := request.Messages[len(request.Messages)-1].SequenceNumber
+		w.Header().Set("Content-Type", "application/json")
+		switch requestNumber.Add(1) {
+		case 1:
+			writeEnvelope(t, w, responseEnvelope(7, last, 51,
+				viewModelInteraction(map[string]any{
+					"Id": "submit-dialog", "Name": dynamics.FormExpenseNewExpenseReport, "TypeName": "Dialog",
+					"ChildViewModels": []any{map[string]any{"Id": "submit-purpose", "Name": dynamics.ControlNamePurpose, "TypeName": "Input"}},
+				}),
+			))
+		case 2:
+			writeEnvelope(t, w, responseEnvelope(7, last, 52,
+				viewModelInteraction(map[string]any{
+					"Id": "unrelated-root", "Name": "Unrelated_form", "TypeName": "Form",
+					"ChildViewModels": []any{submitButtonDescriptor("unrelated-submit")},
+				}),
+				viewModelInteraction(map[string]any{
+					"Id": "submit-details", "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
+					"ChildModelCollections": map[string]any{"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{
+						"Id": "submit-record", "Properties": map[string]any{"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-SUBMIT", "expenseReportStatus_dataMethod": "Draft"},
+					}}}}},
+					"ChildViewModels": []any{
+						map[string]any{"Id": "submit-save", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"},
+						submitButtonDescriptor("submit-target"),
+					},
+				}),
+			))
+		case 3:
+			commands := mustCommands(t, request.Messages[0])
+			if len(commands) != 1 {
+				t.Errorf("submit commands = %#v", commands)
+				break
+			}
+			command := commands[0]
+			if command.CommandName != dynamics.CommandClick || command.RootID != "submit-details" || command.TargetID != "submit-target" || command.PositionalParameters != nil {
+				t.Errorf("submit command = %#v", command)
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, 53,
+				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "workspace", "Descriptor": map[string]any{
+					"Id": "submitted-record", "Properties": map[string]any{"ExpNumber_field": "ER-SUBMIT", "ApprovalStatus_field": "2"},
+				}}),
+				viewModelInteraction(map[string]any{
+					"Id": "unrelated-workspace", "Name": "Unrelated_form", "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{
+						"Id": "unrelated-new-report", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
+					}},
+				}),
+				viewModelInteraction(map[string]any{
+					"Id": "workspace-after-submit", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{
+						"Id": "new-report-after-submit", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
+					}},
+				}),
+			))
+		default:
+			t.Errorf("unexpected request %d", requestNumber.Load())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	request := expense.CreateReportRequest{Purpose: "Conference travel", FinalAction: expense.ReportFinalActionSubmit}
+	plan, err := client.PlanCreateReport(request)
+	if err != nil {
+		t.Fatalf("PlanCreateReport() error = %v", err)
+	}
+	if plan.RequestCount != 3 || !strings.Contains(strings.Join(plan.Actions, " "), "SubmitButton") || requestNumber.Load() != 0 {
+		t.Fatalf("PlanCreateReport() = %#v, requests=%d", plan, requestNumber.Load())
+	}
+
+	report, err := client.CreateReport(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CreateReport() error = %v", err)
+	}
+	want := expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-SUBMIT", Status: "2", Submitted: true}
+	if report != want {
+		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
+	}
+	if requestNumber.Load() != 3 {
+		t.Fatalf("requests = %d, want 3", requestNumber.Load())
+	}
+}
+
+func submitButtonDescriptor(id string) map[string]any {
+	return map[string]any{
+		"Id": id, "Name": dynamics.ControlSubmitButton, "TypeName": "Button",
+		"ValueProperties": map[string]any{
+			"Label": "Submit", "MenuItemType": "Action", "MenuItemName": dynamics.MenuItemSubmit,
+			"PrimaryModelName": "TrvExpTable_ds", "ServiceBoundary": "TrvExpTable",
+		},
+		"SerializedValueProperties": map[string]any{
+			"SaveRecord": "true", "Visible": "true", "Enabled": "true",
+		},
+		"Commands": map[string]any{
+			"Click": map[string]any{
+				"CommandName": "Click",
+				"Properties": map[string]any{
+					"ThrottleGroup": "TG", "Telemetry": "true", "ExecuteImmediate": true, "ShouldBlockOnExecution": true,
+				},
+				"ParameterBindings": map[string]any{},
+				"ValueTypeName":     "Navigate",
+			},
+		},
+		"ChildViewModels": []any{},
+	}
+}
+
+func TestCreateReportRejectsInvalidFinalActionBeforeNetwork(t *testing.T) {
+	t.Parallel()
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := expense.CreateReportRequest{Purpose: "Invalid action"}
+	if _, err := client.PlanCreateReport(request); err == nil || !strings.Contains(err.Error(), "final action") {
+		t.Fatalf("PlanCreateReport() error = %v", err)
+	}
+	if _, err := client.CreateReport(context.Background(), request); err == nil || !strings.Contains(err.Error(), "final action") {
+		t.Fatalf("CreateReport() error = %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("network requests = %d, want 0", requests.Load())
 	}
 }

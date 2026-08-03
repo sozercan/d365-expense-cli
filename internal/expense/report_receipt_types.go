@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	createDraftWithReceiptRequestCount = 12
-	receiptUploadEndpointPath          = "/filemanagement"
-	receiptDocumentType                = "File"
+	receiptUploadEndpointPath = "/filemanagement"
+	receiptDocumentType       = "File"
 )
 
 var receiptMultipartFieldOrder = []string{
@@ -109,84 +108,53 @@ func (contract ReceiptUploadContract) validate() error {
 	return err
 }
 
-// CreateDraftReceiptInput pairs one receipt with the notes sent for that
-// receipt. Inputs are attached in slice order by CreateDraftWithReceipts.
-type CreateDraftReceiptInput struct {
+// CreateReportReceiptInput pairs one receipt with the notes sent for that
+// receipt. Inputs are attached in slice order by CreateReportWithReceipts.
+type CreateReportReceiptInput struct {
 	Notes   string
 	Receipt ReceiptInput
 }
 
-// CreateDraftReceiptSummary is safe to print during a multi-receipt dry run.
-// It deliberately omits the arbitrary receipt notes, matching the original
-// single-receipt plan's non-secret summary surface.
-type CreateDraftReceiptSummary struct {
+// CreateReportReceiptSummary is safe to print during a multi-receipt dry run.
+// It deliberately omits arbitrary receipt notes.
+type CreateReportReceiptSummary struct {
 	Receipt ReceiptSummary
 }
 
-// CreateDraftReceiptResult records one successful attachment and the
+// CreateReportReceiptResult records one successful attachment and the
 // cumulative report receipt count immediately after it was confirmed.
-type CreateDraftReceiptResult struct {
+type CreateReportReceiptResult struct {
 	Attached          AttachedReceipt
 	ReceiptCountAfter int
 }
 
-// CreateDraftWithReceiptsRequest describes one serialized workflow: create a
-// Draft report, attach one or more PNG receipts while its details form remains
-// open, then save and close it without submitting.
-type CreateDraftWithReceiptsRequest struct {
+// CreateReportWithReceiptsRequest describes one report-creation workflow with
+// one or more PNG receipts and an explicit final action.
+type CreateReportWithReceiptsRequest struct {
 	Purpose        string
-	Receipts       []CreateDraftReceiptInput
+	Receipts       []CreateReportReceiptInput
 	UploadContract ReceiptUploadContract
+	FinalAction    ReportFinalAction
 }
 
-// CreateDraftWithReceiptsPlan is a credential-free, offline description of a
-// combined draft and ordered multi-receipt mutation.
-type CreateDraftWithReceiptsPlan struct {
+// CreateReportWithReceiptsPlan is a credential-free, offline description of a
+// report creation and ordered multi-receipt mutation.
+type CreateReportWithReceiptsPlan struct {
 	Purpose      string
-	Receipts     []CreateDraftReceiptSummary
+	Receipts     []CreateReportReceiptSummary
 	RequestCount int
 	Actions      []string
 }
 
-// CreateDraftWithReceiptsResult contains only non-secret outcome data from the
+// CreateReportWithReceiptsResult contains only non-secret outcome data from the
 // combined workflow. Receipts preserves the request order.
-type CreateDraftWithReceiptsResult struct {
+type CreateReportWithReceiptsResult struct {
 	Purpose            string
 	ReportNumber       string
 	Status             string
 	ReceiptCountBefore int
 	ReceiptCountAfter  int
-	Receipts           []CreateDraftReceiptResult
+	Receipts           []CreateReportReceiptResult
 	SavedAndClosed     bool
-}
-
-// CreateDraftWithReceiptRequest describes the compatibility single-receipt
-// workflow. New callers that may attach more than one receipt should use
-// CreateDraftWithReceiptsRequest.
-type CreateDraftWithReceiptRequest struct {
-	Purpose        string
-	Notes          string
-	Receipt        ReceiptInput
-	UploadContract ReceiptUploadContract
-}
-
-// CreateDraftWithReceiptPlan is a credential-free, offline description of the
-// combined draft and receipt mutation.
-type CreateDraftWithReceiptPlan struct {
-	Purpose      string
-	Receipt      ReceiptSummary
-	RequestCount int
-	Actions      []string
-}
-
-// CreateDraftWithReceiptResult contains only non-secret outcome data from the
-// combined workflow.
-type CreateDraftWithReceiptResult struct {
-	Purpose            string
-	ReportNumber       string
-	Status             string
-	ReceiptCountBefore int
-	ReceiptCountAfter  int
-	Attached           AttachedReceipt
-	SavedAndClosed     bool
+	Submitted          bool
 }

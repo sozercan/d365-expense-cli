@@ -50,7 +50,7 @@ func TestHelpDocumentsStandaloneSessionWorkflow(t *testing.T) {
 	if code := run([]string{"help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	for _, want := range []string{"d365-expense", "har capture", "session import", "no submit"} {
+	for _, want := range []string{"d365-expense", "har capture", "session import", "submit"} {
 		if !strings.Contains(strings.ToLower(strings.ReplaceAll(stdout.String(), "\n", " ")), strings.ToLower(want)) {
 			t.Fatalf("help = %q, want %q", stdout.String(), want)
 		}

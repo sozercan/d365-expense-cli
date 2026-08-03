@@ -116,6 +116,185 @@ func TestDiscoverResponseModelRecursesThroughFormsControlsAndProperties(t *testi
 	}
 }
 
+func TestDiscoverResponseModelRequiresUniqueFormRoot(t *testing.T) {
+	fixture := []byte(`{
+		"Descriptors":[
+			{"Id":"workspace-a","Name":"ExpenseWorkspace_form","TypeName":"Form"},
+			{"Id":"workspace-b","Name":"ExpenseWorkspace_form","TypeName":"Form"}
+		]
+	}`)
+	model, err := dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace); ok || form.ID != "" {
+		t.Fatalf("FindUniqueForm() = %#v, %v; want ambiguity", form, ok)
+	}
+
+	fixture = []byte(`{
+		"Descriptors":[
+			{"Id":"workspace","Name":"ExpenseWorkspace_form","TypeName":"Form"},
+			{"Id":"workspace","Name":"ExpenseWorkspace_form","TypeName":"Form","ValueProperties":{"Caption":"updated"}}
+		]
+	}`)
+	model, err = dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace); !ok || form.ID != "workspace" {
+		t.Fatalf("FindUniqueForm() = %#v, %v; want repeated workspace ID", form, ok)
+	}
+}
+
+func TestDiscoverResponseModelPrefersSubmitButtonInDetailsRoot(t *testing.T) {
+	fixture := []byte(`{
+		"Descriptors":[
+			{"Id":"unrelated-root","Name":"Unrelated_form","TypeName":"Form","ChildViewModels":[
+				{"Id":"unrelated-submit","Name":"SubmitButton","TypeName":"Button"}
+			]},
+			{"Id":"details-root","Name":"ExpenseReportDetails_form","TypeName":"Form","ChildViewModels":[
+				{"Id":"details-submit","Name":"SubmitButton","TypeName":"Button"}
+			]}
+		]
+	}`)
+
+	model, err := dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatalf("DiscoverResponseModel() error = %v", err)
+	}
+	details, ok := model.FindForm(dynamics.FormExpenseReportDetails)
+	if !ok {
+		t.Fatal("details form not discovered")
+	}
+	button, ok := model.FindControl(dynamics.ControlSubmitButton)
+	if !ok {
+		t.Fatal("SubmitButton not discovered")
+	}
+	if button.ID != "details-submit" || button.RootID != details.ID {
+		t.Fatalf("FindControl(SubmitButton) = %#v, want details-root candidate", button)
+	}
+
+	for rootID, wantID := range map[string]string{
+		"unrelated-root": "unrelated-submit",
+		"details-root":   "details-submit",
+	} {
+		button, ok := model.FindControlInRoot(dynamics.ControlSubmitButton, rootID)
+		if !ok || button.ID != wantID {
+			t.Errorf("FindControlInRoot(SubmitButton, %q) = %#v, %v; want ID %q", rootID, button, ok, wantID)
+		}
+	}
+
+	receiptModel, err := dynamics.DiscoverReceiptModel(fixture)
+	if err != nil {
+		t.Fatalf("DiscoverReceiptModel() error = %v", err)
+	}
+	if receiptModel.SubmitButton.ID != "details-submit" || receiptModel.SubmitButton.RootID != details.ID {
+		t.Fatalf("receipt SubmitButton = %#v, want details-root candidate", receiptModel.SubmitButton)
+	}
+}
+
+func TestDiscoverReceiptModelRetainsSubmitButtonsByRootWithoutDetailsForm(t *testing.T) {
+	fixture := []byte(`{
+		"Messages":[{"Interactions":[
+			{"RootId":"unrelated-root","Descriptor":{"Id":"unrelated-submit","Name":"SubmitButton","TypeName":"Button"}},
+			{"RootId":"details-root","Descriptor":{"Id":"details-submit","Name":"SubmitButton","TypeName":"Button"}}
+		]}]
+	}`)
+
+	model, err := dynamics.DiscoverReceiptModel(fixture)
+	if err != nil {
+		t.Fatalf("DiscoverReceiptModel() error = %v", err)
+	}
+	for rootID, wantID := range map[string]string{
+		"unrelated-root": "unrelated-submit",
+		"details-root":   "details-submit",
+	} {
+		button, ok := model.FindSubmitButtonInRoot(rootID)
+		if !ok || button.ID != wantID || button.RootID != rootID {
+			t.Errorf("FindSubmitButtonInRoot(%q) = %#v, %v; want ID %q", rootID, button, ok, wantID)
+		}
+	}
+	if button, ok := model.FindSubmitButtonInRoot("missing-root"); ok || button.ID != "" {
+		t.Fatalf("FindSubmitButtonInRoot(missing-root) = %#v, %v", button, ok)
+	}
+}
+
+func TestDiscoverResponseModelMergesSameRootControlDeltas(t *testing.T) {
+	tests := []struct {
+		name     string
+		update   string
+		wantID   string
+		wantType string
+	}{
+		{name: "rotated ID", update: `{"Id":"submit-new","Name":"SubmitButton"}`, wantID: "submit-new", wantType: "Button"},
+		{name: "explicit type clear", update: `{"Id":"submit-new","Name":"SubmitButton","TypeName":""}`, wantID: "submit-new", wantType: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := []byte(`{
+				"Messages":[{"Interactions":[
+					{"RootId":"details-root","Descriptor":{"Id":"submit-old","Name":"SubmitButton","TypeName":"Button","ValueProperties":{"MenuItemName":"TrvSubmit"}}},
+					{"RootId":"details-root","Descriptor":` + test.update + `}
+				]}]
+			}`)
+			model, err := dynamics.DiscoverResponseModel(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			button, ok := model.FindControlInRoot(dynamics.ControlSubmitButton, "details-root")
+			if !ok || button.ID != test.wantID || button.TypeName != test.wantType {
+				t.Fatalf("FindControlInRoot() = %#v, %v", button, ok)
+			}
+			if test.wantType == "Button" && string(button.ValueProperties["MenuItemName"]) != `"TrvSubmit"` {
+				t.Fatalf("merged MenuItemName = %s", button.ValueProperties["MenuItemName"])
+			}
+		})
+	}
+}
+
+func TestMergeModelNodeComposesMetadataBeforeID(t *testing.T) {
+	previous := dynamics.ModelNode{TypeName: "Button"}
+	update := dynamics.ModelNode{ID: "submit-new", Name: dynamics.ControlSubmitButton, RootID: "details-root"}
+	merged := dynamics.MergeModelNode(previous, update)
+	if merged.ID != "submit-new" || merged.Name != dynamics.ControlSubmitButton || merged.TypeName != "Button" || merged.RootID != "details-root" {
+		t.Fatalf("MergeModelNode() = %#v", merged)
+	}
+}
+
+func TestMergeModelNodePreservesExplicitClearProvenance(t *testing.T) {
+	fixture := []byte(`{
+		"Messages":[{"Interactions":[
+			{"RootId":"details-root","Descriptor":{"Id":"submit-old","Name":"SubmitButton","TypeName":"Button","ValueProperties":{"MenuItemName":"TrvSubmit"}}},
+			{"RootId":"details-root","Descriptor":{"Id":"submit-cleared","Name":"SubmitButton","TypeName":"","ValueProperties":null}},
+			{"RootId":"details-root","Descriptor":{"Id":"submit-new","Name":"SubmitButton","ValueProperties":{"Label":"Submit"}}}
+		]}]
+	}`)
+	model, err := dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, ok := model.FindControlInRoot(dynamics.ControlSubmitButton, "details-root")
+	if !ok || update.ID != "submit-new" || update.TypeName != "" ||
+		string(update.ValueProperties["Label"]) != `"Submit"` || update.ValueProperties["MenuItemName"] != nil {
+		t.Fatalf("merged update = %#v, %v", update, ok)
+	}
+
+	baseFixture := []byte(`{"RootId":"details-root","Descriptor":{"Id":"base","Name":"SubmitButton","TypeName":"Button","ValueProperties":{"MenuItemName":"TrvSubmit"}}}`)
+	baseModel, err := dynamics.DiscoverResponseModel(baseFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, ok := baseModel.FindControlInRoot(dynamics.ControlSubmitButton, "details-root")
+	if !ok {
+		t.Fatal("base SubmitButton not discovered")
+	}
+	remerged := dynamics.MergeModelNode(base, update)
+	if remerged.ID != "submit-new" || remerged.TypeName != "" ||
+		string(remerged.ValueProperties["Label"]) != `"Submit"` || remerged.ValueProperties["MenuItemName"] != nil {
+		t.Fatalf("remerged node resurrected cleared metadata: %#v", remerged)
+	}
+}
+
 func TestDiscoverResponseModelRejectsInvalidOrMultipleJSONValues(t *testing.T) {
 	for _, fixture := range [][]byte{[]byte(`{"Messages":`), []byte(`{} {}`)} {
 		if _, err := dynamics.DiscoverResponseModel(fixture); err == nil {

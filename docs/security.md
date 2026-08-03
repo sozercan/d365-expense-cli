@@ -1,18 +1,28 @@
 # Security model
 
-## No-submit boundary
+## Default-submission boundary
 
-`d365-expense-cli` can create and modify **Draft** expense reports only.
+`d365-expense-cli` can save a new report as a Draft or explicitly submit that
+same newly created report.
 
-- `create` and `receipt attach` require `--draft`.
-- There is no submit command, `--submit` flag, or submit API.
-- Command validators reject submit, workflow, approval, posting, and recall
-  terminology and require exact operation-specific control shapes.
+- `create` submits by default; `--draft` is the explicit opt-out that selects
+  Save and close instead.
+- `--dry-run` sends no network requests for either outcome.
+- `receipt attach` remains Draft-only and requires `--draft`.
+- Draft and receipt validators still reject submit, workflow, approval, posting,
+  and recall commands. A separate submission validator permits only one exact
+  `Click` against the dynamically discovered `SubmitButton` for the newly
+  created report.
+- Submission success requires response evidence for the same report explicitly
+  showing `Submitted` or the modeled status code `2`. Stable code evidence takes
+  precedence over localized display text; unknown non-Draft states without that
+  evidence, an HTTP success, or a sequence acknowledgement alone are insufficient.
 - No generic click, control, message, or upload interface is exposed.
 
-`--draft` is a safety assertion, not a state transition to submission. Canonical
-mutating commands execute by default; use `--dry-run` to perform local
-validation without sending network requests.
+Canonical mutating commands execute by default. Use `--dry-run` to perform local
+validation without sending network requests, and use `--draft` only to prevent
+the default submission. The CLI does not approve, post, recall, or submit an
+already-closed Draft by report number.
 
 ## Raw captures and imported sessions are credentials
 
@@ -143,17 +153,20 @@ reject ambiguous targets, incomplete or unacknowledged state, failed model
 validation, and authentication redirects rather than persisting partial state.
 
 A browser is optional for acquiring fresh authentication. Once a named session
-exists, normal Draft creation is browser-free.
+exists, report creation and default creation-time submission are browser-free.
 
 ## Mutation boundary
 
-The canonical CLI supports these bounded Draft mutations:
+The canonical CLI supports these bounded mutations:
 
 1. `d365-expense create --draft` creates and saves a new Draft;
 2. repeatable `--receipt FILE` flags attach one or more report-level PNG
-   receipts before the new Draft is saved and closed; and
+   receipts before the chosen final action;
 3. `d365-expense receipt attach --draft` attaches a receipt to an already open,
-   report-specific captured Draft.
+   report-specific captured Draft; and
+4. `d365-expense create` creates a new Draft, attaches any receipts, validates
+   the exact `SubmitButton` contract, and submits only after every prior stage
+   succeeds. `--draft` selects `SaveAndClose` instead.
 
 Receipt attachment uses exact stage-specific commands, a same-origin
 `/filemanagement` upload, a short-lived token discovered during execution, and
@@ -164,10 +177,16 @@ of validated bytes so pathname replacement cannot change what is uploaded.
 
 For multi-receipt creation, every local file is validated before the first
 network request. Receipts are attached in argument order, and cumulative count
-is verified after each upload. `SaveAndClose` is sent only after all receipts
-succeed. A failure after any accepted request marks a named session non-ready;
-the CLI does not automatically retry, compensate, or submit the partially
-populated Draft.
+is verified after each upload. `SaveAndClose` or `SubmitButton` is sent only
+after all receipts succeed. A failure after any accepted request marks a named
+session non-ready; the CLI does not automatically retry or compensate.
+
+The captured response models consistently expose `SubmitButton` backed by the
+`TrvSubmit` action, but the repository does not contain a successful outbound
+Submit capture. The implementation therefore fail-closes on metadata drift and
+requires positive post-submit status evidence. Before first production use,
+validate the path with an authorized disposable report and inspect the result in
+Dynamics. Never retry an unverified submission.
 
 The built-in upload contract is used by default. The old
 `--receipt-protocol-har` flag remains only as a temporary compatibility input;
@@ -178,8 +197,8 @@ when supplied, only its non-secret fixed contract is used.
 The `msexpense` binary, old flat commands, legacy flags, and `MSEXPENSE_*`
 environment variables remain temporary migration aliases. Canonical
 `d365-expense`, `D365_EXPENSE_*`, and nested command syntax take precedence.
-Compatibility must never broaden the operation allowlist or introduce a submit
-path.
+Compatibility must never broaden an operation allowlist or silently change the
+canonical default-submit / explicit-Draft contract.
 
 ## Operational limitations
 

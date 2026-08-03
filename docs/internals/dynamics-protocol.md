@@ -89,7 +89,7 @@ Names resolve under:
 
 ## Profile sources for expense commands
 
-`create --draft` requires exactly one of:
+`create` requires exactly one authentication source:
 
 ```text
 --session <name>
@@ -102,8 +102,8 @@ must be treated as one-shot after a network operation begins.
 
 Canonical mutating commands execute by default. `--dry-run` performs local
 validation and prints the plan without sending requests or changing named
-session state. The required `--draft` flag is a safety assertion; there is no
-`--submit` mode.
+session state. `create` selects the exact discovered `SubmitButton` by default;
+`--draft` selects `SaveAndClose` instead.
 
 ## Session status lifecycle
 
@@ -157,9 +157,43 @@ flow directly over HTTP:
    number, Draft status, and the `SaveAndClose` control.
 5. Click only `SaveAndClose` to return to the workspace.
 
-The details form may expose a `SubmitButton`. This project deliberately has no
-submit operation, and outbound-command validation rejects submit, approve,
-post, workflow-transition, and recall commands.
+Draft creation continues to use only `SaveAndClose`, even when the details form
+also exposes `SubmitButton`.
+
+## Creation-time submission flow
+
+The submission operation shares steps 1–4 above, then requires the discovered
+control to match the captured contract exactly:
+
+- name `SubmitButton`, type `Button`;
+- action menu item `TrvSubmit` on `TrvExpTable_ds` / `TrvExpTable` (the localized
+  display label is not used as identity);
+- visible, enabled, and save-record metadata;
+- a blocking, immediate, throttled `Click` command descriptor with no parameter
+  bindings and value type `Navigate`; and
+- the current `ExpenseReportDetails_form` root.
+
+The submit validator permits one inferred `Click` with null positional
+parameters against only that admitted root and target. Draft and receipt
+validators remain unchanged and continue to reject submit, approval, posting,
+workflow, and recall commands.
+
+After the click, success requires fresh response evidence that identifies the
+same generated report number and explicitly carries `Submitted` or the modeled
+status code `2`. When both are present, the stable code is authoritative over a
+localized display label; a recognized contradictory label still fails closed.
+`Draft` / code `1` and all unknown states without stable submitted evidence fail
+closed. The response must also restore an
+`ExpenseWorkspace_form` with its `NewExpenseReportReportsTab` control before the
+session is reusable. Missing, conflicting, still-Draft, or non-workspace
+evidence is an operation error and makes a named session non-ready because
+Dynamics may already have accepted the request.
+
+The local captures consistently contain the Submit control metadata but no
+successful outbound Submit request. The one-click shape is therefore inferred
+from the closest captured details-form action. Confirmation dialogs or tenant
+workflow variations are not guessed; they fail closed until captured and
+modeled explicitly.
 
 ## Multiple receipts during creation
 
@@ -185,10 +219,10 @@ clicking `SaveAndClose`. For each receipt it:
    receipt-count checks in [receipt-protocol.md](receipt-protocol.md); and
 5. proceeds to the next receipt only after the cumulative count is confirmed.
 
-Only after every receipt succeeds does the CLI click the new report's dynamic
-`SaveAndClose` control. It validates all local files before the first network
-request and never automatically retries, compensates, or submits a partially
-populated Draft.
+Only after every receipt succeeds does the CLI click the validated
+`SubmitButton`, or the dynamic `SaveAndClose` when `--draft` is present. It
+validates all local files before the first network request and never
+automatically retries or compensates a partially populated Draft.
 
 The preferred path uses the built-in, validated, non-secret upload contract:
 

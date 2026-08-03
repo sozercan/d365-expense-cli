@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,15 +27,17 @@ func (paths *receiptPathList) Set(value string) error {
 	return nil
 }
 
+// runCreateDraftWithReceipt preserves the deprecated singular legacy command.
 func runCreateDraftWithReceipt(args []string, stdout, stderr io.Writer) int {
-	return runCreateDraftWithReceiptsCommand("create-draft-with-receipt", args, stdout, stderr)
+	return runCreateReportWithReceiptsCommand("create-draft-with-receipt", args, stdout, stderr)
 }
 
+// runCreateDraftWithReceipts preserves the deprecated plural legacy command.
 func runCreateDraftWithReceipts(args []string, stdout, stderr io.Writer) int {
-	return runCreateDraftWithReceiptsCommand("create-draft-with-receipts", args, stdout, stderr)
+	return runCreateReportWithReceiptsCommand("create-draft-with-receipts", args, stdout, stderr)
 }
 
-func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout, stderr io.Writer) int {
+func runCreateReportWithReceiptsCommand(commandName string, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	harPath := flags.String("har", "", "path to a private raw HAR capture")
@@ -44,7 +47,8 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 	var filePaths receiptPathList
 	flags.Var(&filePaths, "file", "private PNG receipt file; repeat for every receipt")
 	notes := flags.String("notes", "", "optional notes applied to every receipt")
-	execute := flags.Bool("execute", false, "create the Draft, attach all receipts, and save and close without submitting")
+	submit := flags.Bool("submit", false, "submit the newly created report after attaching every receipt")
+	execute := flags.Bool("execute", false, "create the report and perform its requested final action")
 	timeout := flags.Duration("timeout", 120*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -69,7 +73,6 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 		fmt.Fprintf(stderr, "%s requires a positive --timeout\n", commandName)
 		return 2
 	}
-
 	contract := expense.BuiltinReceiptUploadContract()
 	if *receiptProtocolHAR != "" {
 		if err := requirePrivateCapture(*receiptProtocolHAR); err != nil {
@@ -102,12 +105,17 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
 		return 1
 	}
-	request := expense.CreateDraftWithReceiptsRequest{
+	finalAction := expense.ReportFinalActionSaveDraft
+	if *submit {
+		finalAction = expense.ReportFinalActionSubmit
+	}
+	request := expense.CreateReportWithReceiptsRequest{
 		Purpose:        *purpose,
 		Receipts:       receipts,
 		UploadContract: contract,
+		FinalAction:    finalAction,
 	}
-	plan, err := client.PlanCreateDraftWithReceipts(request)
+	plan, err := client.PlanCreateReportWithReceipts(request)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
 		return 1
@@ -124,7 +132,11 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 		for _, action := range plan.Actions {
 			fmt.Fprintf(stdout, "- %s\n", action)
 		}
-		fmt.Fprintln(stdout, "rerun with --execute to create the Draft, attach all receipts, and save and close it without submitting")
+		if *submit {
+			fmt.Fprintln(stdout, "rerun with --execute to create the report, attach all receipts, and submit it")
+		} else {
+			fmt.Fprintln(stdout, "rerun with --execute to create the Draft, attach all receipts, and save and close it")
+		}
 		return 0
 	}
 
@@ -140,41 +152,53 @@ func runCreateDraftWithReceiptsCommand(commandName string, args []string, stdout
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, operationErr := client.CreateDraftWithReceipts(ctx, request)
+	result, operationErr := client.CreateReportWithReceipts(ctx, request)
 	var checkpointErr error
 	if execution != nil {
 		checkpointErr = execution.finish(operationErr)
 	}
 	if operationErr != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", commandName, operationErr)
-		fmt.Fprintln(stderr, "the Draft may contain earlier receipts and was not saved and closed; do not retry with the same session or HAR")
-		if checkpointErr != nil {
-			fmt.Fprintf(stderr, "%s: session checkpoint also failed: %v\n", commandName, checkpointErr)
-		}
+		writeCreateReportWithReceiptsOperationFailure(stderr, commandName, operationErr, checkpointErr)
 		return 1
 	}
-	fmt.Fprintf(stdout, "created draft %s: purpose=%q status=%s receipts=%d receipt-count=%d->%d saved-and-closed=%t\n",
-		result.ReportNumber, result.Purpose, result.Status, len(result.Receipts),
-		result.ReceiptCountBefore, result.ReceiptCountAfter, result.SavedAndClosed)
+	if result.Submitted {
+		fmt.Fprintf(stdout, "created and submitted report %s: purpose=%q status=%s receipts=%d receipt-count=%d->%d submitted=true\n",
+			result.ReportNumber, result.Purpose, result.Status, len(result.Receipts),
+			result.ReceiptCountBefore, result.ReceiptCountAfter)
+	} else {
+		fmt.Fprintf(stdout, "created draft %s: purpose=%q status=%s receipts=%d receipt-count=%d->%d saved-and-closed=%t\n",
+			result.ReportNumber, result.Purpose, result.Status, len(result.Receipts),
+			result.ReceiptCountBefore, result.ReceiptCountAfter, result.SavedAndClosed)
+	}
 	for index, attached := range result.Receipts {
 		fmt.Fprintf(stdout, "- attached %d: %q (%d bytes), cumulative-receipt-count=%d\n",
 			index+1, attached.Attached.Filename, attached.Attached.Size, attached.ReceiptCountAfter)
 	}
 	if checkpointErr != nil {
-		fmt.Fprintf(stderr, "%s: draft and receipts were saved, but session checkpoint failed; do not retry this expense operation: %v\n", commandName, checkpointErr)
+		fmt.Fprintf(stderr, "%s: report operation succeeded, but session checkpoint failed; do not retry this expense operation: %v\n", commandName, checkpointErr)
 		return 1
 	}
 	return 0
 }
 
-func receiptInputsFromPaths(paths []string, notes string, maxSize int64) ([]expense.CreateDraftReceiptInput, error) {
-	result := make([]expense.CreateDraftReceiptInput, 0, len(paths))
+func writeCreateReportWithReceiptsOperationFailure(stderr io.Writer, commandName string, operationErr, checkpointErr error) {
+	fmt.Fprintf(stderr, "%s: %v\n", commandName, operationErr)
+	if errors.Is(operationErr, expense.ErrOperationUncertain) {
+		fmt.Fprintln(stderr, "the report may contain earlier receipts and its final state may be uncertain; do not retry with the same session or HAR")
+	}
+	if checkpointErr != nil {
+		fmt.Fprintf(stderr, "%s: session checkpoint also failed: %v\n", commandName, checkpointErr)
+	}
+}
+
+func receiptInputsFromPaths(paths []string, notes string, maxSize int64) ([]expense.CreateReportReceiptInput, error) {
+	result := make([]expense.CreateReportReceiptInput, 0, len(paths))
 	for index, path := range paths {
 		receipt, err := receiptInputFromPath(path, maxSize)
 		if err != nil {
 			return nil, fmt.Errorf("validate receipt %d: %w", index+1, err)
 		}
-		result = append(result, expense.CreateDraftReceiptInput{Notes: notes, Receipt: receipt})
+		result = append(result, expense.CreateReportReceiptInput{Notes: notes, Receipt: receipt})
 	}
 	return result, nil
 }

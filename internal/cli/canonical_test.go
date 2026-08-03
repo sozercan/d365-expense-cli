@@ -26,22 +26,50 @@ func TestCanonicalHelpShowsStructuredCommands(t *testing.T) {
 	}
 }
 
-func TestCanonicalCreateRequiresDraftAndSource(t *testing.T) {
+func TestCanonicalCreateRequiresSource(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	if code := runCanonical([]string{"create", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("missing draft code = %d", code)
-	}
-	if !strings.Contains(stderr.String(), "--draft is required") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := runCanonical([]string{"create", "--draft", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
+	if code := runCanonical([]string{"create", "--purpose", "event", "--dry-run"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("missing source code = %d", code)
 	}
 	if !strings.Contains(stderr.String(), "exactly one of --har or --session") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCanonicalCreateSubmitsByDefault(t *testing.T) {
+	t.Parallel()
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.createReport = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runCanonicalWithRunners([]string{"create", "--session", "work", "--purpose", "event"}, &stdout, &stderr, runners); code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	want := []string{"--session", "work", "--purpose", "event", "--submit", "--timeout", "45s", "--execute"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestCanonicalCreateDefaultSubmitDryRunNeverExecutes(t *testing.T) {
+	t.Parallel()
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.createReport = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runCanonicalWithRunners([]string{"create", "--session", "work", "--purpose", "event", "--dry-run"}, &stdout, &stderr, runners); code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	want := []string{"--session", "work", "--purpose", "event", "--submit", "--timeout", "45s"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
 
@@ -57,7 +85,7 @@ func TestCanonicalCreateRoutesReceiptsInOrderAndExecutesByDefault(t *testing.T) 
 	}
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraftWithReceipts = func(args []string, _, _ io.Writer) int {
+	runners.createReportWithReceipts = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}
@@ -79,7 +107,7 @@ func TestCanonicalCreateDryRunOmitsExecute(t *testing.T) {
 	t.Parallel()
 	var got []string
 	runners := defaultLegacyRunners()
-	runners.createDraft = func(args []string, _, _ io.Writer) int {
+	runners.createReport = func(args []string, _, _ io.Writer) int {
 		got = append([]string(nil), args...)
 		return 0
 	}
@@ -91,5 +119,58 @@ func TestCanonicalCreateDryRunOmitsExecute(t *testing.T) {
 		if arg == "--execute" {
 			t.Fatalf("dry run included --execute: %#v", got)
 		}
+	}
+}
+
+func TestCanonicalCreateSubmitsReceiptsByDefault(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	receipt := filepath.Join(dir, "receipt.png")
+	if err := os.WriteFile(receipt, tinyPNG, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.createReportWithReceipts = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	code := runCanonicalWithRunners([]string{
+		"create", "--session", "work", "--purpose", "event", "--receipt", receipt,
+	}, &stdout, &stderr, runners)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	want := []string{
+		"--session", "work", "--purpose", "event", "--submit",
+		"--timeout", "2m0s", "--file", receipt, "--execute",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestLegacyReplacementPreservesCreateSubmitIntent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "draft", args: []string{"create-draft"}, want: "d365-expense create --draft"},
+		{name: "submit", args: []string{"create-draft", "--submit"}, want: "d365-expense create"},
+		{name: "singular receipt submit", args: []string{"create-draft-with-receipt", "--submit=true"}, want: "d365-expense create"},
+		{name: "plural receipts submit", args: []string{"create-draft-with-receipts", "-submit"}, want: "d365-expense create"},
+		{name: "explicit draft", args: []string{"create-draft-with-receipts", "--submit=false"}, want: "d365-expense create --draft"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := legacyReplacement(test.args); got != test.want {
+				t.Fatalf("legacyReplacement(%#v) = %q, want %q", test.args, got, test.want)
+			}
+		})
 	}
 }

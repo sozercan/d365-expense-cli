@@ -250,7 +250,7 @@ func (session *Session) Validate() error {
 		return errors.New("session next client sequence is invalid")
 	}
 	if session.NextClientSequence > math.MaxInt64-3 {
-		return errors.New("session client sequence lacks headroom for draft creation")
+		return errors.New("session client sequence lacks headroom for report creation")
 	}
 	if err := validateHeaders(session.Headers); err != nil {
 		return err
