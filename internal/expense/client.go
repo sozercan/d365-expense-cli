@@ -377,8 +377,8 @@ func (client *Client) submitOpenDraft(ctx context.Context, reportNumber, details
 	if !ok || workspace.ID == "" {
 		return "", errors.New("expense: submit response did not restore the Expense workspace")
 	}
-	newReport, ok := model.FindControl(dynamics.SelectedControlNewExpenseReportReportsTab)
-	if !ok || newReport.ID == "" || newReport.RootID != workspace.ID {
+	newReport, ok := model.FindControlInRoot(dynamics.SelectedControlNewExpenseReportReportsTab, workspace.ID)
+	if !ok || newReport.ID == "" {
 		return "", errors.New("expense: submit response did not restore the New expense report control")
 	}
 	client.workspaceRootID = workspace.ID

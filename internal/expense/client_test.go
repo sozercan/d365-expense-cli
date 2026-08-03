@@ -333,6 +333,12 @@ func TestCreateAndSubmitUsesExactDiscoveredSubmitButton(t *testing.T) {
 					"Id": "submitted-record", "Properties": map[string]any{"ExpNumber_field": "ER-SUBMIT", "ApprovalStatus_field": "2"},
 				}}),
 				viewModelInteraction(map[string]any{
+					"Id": "unrelated-workspace", "Name": "Unrelated_form", "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{
+						"Id": "unrelated-new-report", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
+					}},
+				}),
+				viewModelInteraction(map[string]any{
 					"Id": "workspace-after-submit", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
 					"ChildViewModels": []any{map[string]any{
 						"Id": "new-report-after-submit", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
