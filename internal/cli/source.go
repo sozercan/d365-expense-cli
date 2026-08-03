@@ -9,6 +9,10 @@ import (
 	sessionstore "github.com/sozercan/d365-expense-cli/internal/session"
 )
 
+var defaultSessionStore = func() (*sessionstore.Store, error) {
+	return sessionstore.DefaultStore()
+}
+
 func validateProfileSource(command, harPath, sessionName string) error {
 	if (harPath == "") == (sessionName == "") {
 		return fmt.Errorf("%s requires exactly one of --har or --session", command)
@@ -23,7 +27,7 @@ func loadBootstrapForRead(harPath, sessionName string) (*capture.BootstrapProfil
 		}
 		return capture.LoadBootstrap(harPath)
 	}
-	store, err := sessionstore.DefaultStore()
+	store, err := defaultSessionStore()
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +50,7 @@ type namedSessionExecution struct {
 }
 
 func beginNamedSessionExecution(name string) (*namedSessionExecution, error) {
-	store, err := sessionstore.DefaultStore()
+	store, err := defaultSessionStore()
 	if err != nil {
 		return nil, err
 	}

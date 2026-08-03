@@ -203,11 +203,14 @@ func (client *ReceiptClient) AttachReceipt(ctx context.Context, request AttachRe
 		return AttachReceiptResult{}, errors.New("expense: client sequence lacks headroom for receipt attachment")
 	}
 
-	attached, err := client.attachReceiptLocked(ctx, request, documentName)
-	if err != nil {
-		return AttachReceiptResult{}, err
+	attached, attachErr := client.attachReceiptLocked(ctx, request, documentName)
+	if attachErr != nil {
+		return AttachReceiptResult{}, attachErr
 	}
-	if err := client.saveAndCloseLocked(ctx); err != nil {
+	// This report-specific compatibility client is one-shot and has no reusable
+	// workspace bootstrap to checkpoint, so only the combined workflow consumes
+	// the restored workspace model from the SaveAndClose response.
+	if _, err := client.saveAndCloseLocked(ctx); err != nil {
 		return AttachReceiptResult{}, err
 	}
 	attached.SavedAndClosed = true
@@ -240,18 +243,18 @@ func (client *ReceiptClient) attachReceiptWithoutSave(ctx context.Context, reque
 // saveAndClose saves the current Draft after one or more successful receipt
 // attachments. Callers must not invoke it until every requested attachment has
 // passed its Draft-status and cumulative-count checks.
-func (client *ReceiptClient) saveAndClose(ctx context.Context) error {
+func (client *ReceiptClient) saveAndClose(ctx context.Context) ([]byte, error) {
 	if client == nil {
-		return errors.New("expense: receipt client is nil")
+		return nil, errors.New("expense: receipt client is nil")
 	}
 	if ctx == nil {
-		return errors.New("expense: context is nil")
+		return nil, errors.New("expense: context is nil")
 	}
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if client.nextClientSequence > math.MaxInt64-receiptSaveSequenceHeadroom {
-		return errors.New("expense: client sequence lacks headroom to save and close receipt report")
+		return nil, errors.New("expense: client sequence lacks headroom to save and close receipt report")
 	}
 	return client.saveAndCloseLocked(ctx)
 }
@@ -441,9 +444,9 @@ func (client *ReceiptClient) attachReceiptLocked(ctx context.Context, request At
 	}, nil
 }
 
-func (client *ReceiptClient) saveAndCloseLocked(ctx context.Context) error {
+func (client *ReceiptClient) saveAndCloseLocked(ctx context.Context) ([]byte, error) {
 	if client.detailsRootID == "" || client.saveAndCloseID == "" {
-		return errors.New("expense: SaveAndClose control is missing")
+		return nil, errors.New("expense: SaveAndClose control is missing")
 	}
 	save := dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, client.detailsRootID, client.saveAndCloseID)
 	saveBody, err := client.sendReceipt(ctx, []dynamics.Message{save}, dynamics.ReceiptCommandTargets{
@@ -451,12 +454,12 @@ func (client *ReceiptClient) saveAndCloseLocked(ctx context.Context) error {
 		SaveAndCloseID: client.saveAndCloseID,
 	})
 	if err != nil {
-		return fmt.Errorf("expense: save and close receipt report: %w", err)
+		return nil, fmt.Errorf("expense: save and close receipt report: %w", err)
 	}
 	if err := client.validateOptionalReceiptState(saveBody); err != nil {
-		return fmt.Errorf("expense: validate SaveAndClose response: %w", err)
+		return nil, fmt.Errorf("expense: validate SaveAndClose response: %w", err)
 	}
-	return nil
+	return saveBody, nil
 }
 
 func (client *ReceiptClient) validateRequest(request AttachReceiptRequest) (string, error) {

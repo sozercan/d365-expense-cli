@@ -30,14 +30,16 @@ An executable HAR contains authenticated cookies and CSRF/session headers used
 by the Dynamics browser. Anyone who can read it may be able to act as that
 browser session until the server expires or revokes it.
 
-A named session is smaller than a HAR but is still a plaintext credential. It
-contains the Dynamics origin and endpoint, company and language, channel and
-sequence state, allowlisted request headers and cookies, and the current New
-Report control. It intentionally omits HAR response history and unrelated
-browser traffic, but it requires the same protection as the raw capture.
+A named session is smaller than a HAR and is encrypted at rest. It contains the
+Dynamics origin and endpoint, company and language, channel and sequence state,
+allowlisted request headers and cookies, and the current New Report control. It
+intentionally omits HAR response history and unrelated browser traffic. The
+file ciphertext is protected by an authenticated encryption key stored in the
+operating system keyring.
 
 - Raw HARs must be regular, non-symlink files with owner-only permissions.
-- Imported sessions are stored as owner-only files and must be ignored by Git.
+- Imported sessions are stored as encrypted owner-only files and must be
+  ignored by Git.
 - The CLI never prints cookie, token, or header values.
 - `session list` and `session show NAME` expose only safe metadata and
   credential names.
@@ -67,11 +69,25 @@ Typical roots are:
 `D365_EXPENSE_CONFIG_DIR` overrides the root. `MSEXPENSE_CONFIG_DIR` remains a
 temporary lower-precedence compatibility alias.
 
-Configuration and session directories require mode `0700`; session files
-require mode `0600`. Writes are atomic. The store rejects symlinks, non-regular
-files, oversized files, unknown session fields or versions, and permissions
-that grant group or other access. Session names are limited to 1–64 ASCII
-letters, digits, `.`, `_`, or `-`.
+Configuration and session directories require mode `0700`; encrypted session
+files require mode `0600`. Writes are atomic and use a fresh authenticated-
+encryption nonce. The data key is stored separately in macOS Keychain, Windows
+Credential Manager, or Linux Secret Service. The store never falls back to
+plaintext when the keyring is unavailable. It rejects symlinks, non-regular
+files, oversized files, unauthenticated ciphertext, unknown fields or versions,
+and permissions that grant group or other access. Session names are limited to
+1–64 ASCII letters, digits, `.`, `_`, or `-`.
+
+Legacy plaintext session files remain readable for compatibility. Read-only
+commands do not rewrite them. The next named-session execution writes the
+`in_progress` checkpoint as encrypted ciphertext before any network mutation,
+thereby migrating the file without requiring a browser login.
+
+Keyring-backed encryption protects session files in backups, copied config
+directories, and offline disk access. It does not protect against malicious
+code already running as the same logged-in user and able to request the keyring
+secret. Authentication expiry and server-side revocation remain the ultimate
+credential lifetime boundary.
 
 Executed named-session commands hold an exclusive per-session lock so two
 processes cannot advance one Dynamics channel concurrently. `--dry-run` reads

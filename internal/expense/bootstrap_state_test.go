@@ -103,7 +103,12 @@ func TestSaveDraftHTTPPathMergesCookieAndHeaderRotation(t *testing.T) {
 				}),
 			))
 		case 3:
-			stateTestWriteEnvelope(t, w, stateTestResponseEnvelope(7, last, 53))
+			stateTestWriteEnvelope(t, w, stateTestResponseEnvelope(7, last, 53,
+				stateTestViewModel(map[string]any{
+					"Id": "rotated-workspace", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{"Id": "rotated-new-report", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "CommandButton"}},
+				}),
+			))
 		default:
 			http.Error(w, "unexpected request", http.StatusInternalServerError)
 		}
@@ -134,6 +139,9 @@ func TestSaveDraftHTTPPathMergesCookieAndHeaderRotation(t *testing.T) {
 	}
 	if got, want := snapshot.Session.NextClientSequence, int64(84); got != want {
 		t.Fatalf("NextClientSequence = %d, want %d", got, want)
+	}
+	if snapshot.NewReport.RootID != "rotated-workspace" || snapshot.NewReport.TargetID != "rotated-new-report" {
+		t.Fatalf("snapshot NewReport = %#v", snapshot.NewReport)
 	}
 }
 
@@ -344,4 +352,23 @@ func stateTestProfileCookie(cookies []*http.Cookie, name string) string {
 		}
 	}
 	return ""
+}
+
+func TestRestoreWorkspaceFailsClosedWithoutScopedNewReport(t *testing.T) {
+	client := &Client{workspaceRootID: "old-workspace", createButtonID: "old-new-report"}
+	body, err := dynamics.MarshalEnvelope(stateTestResponseEnvelope(7, 83, 53,
+		stateTestViewModel(map[string]any{
+			"Id": "restored-workspace", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+			"ChildViewModels": []any{map[string]any{"Id": "outside-control", "Name": "OtherControl", "TypeName": "CommandButton"}},
+		}),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.restoreWorkspace(body, "save and close response"); err == nil {
+		t.Fatal("restoreWorkspace() error = nil")
+	}
+	if client.workspaceRootID != "old-workspace" || client.createButtonID != "old-new-report" {
+		t.Fatalf("failed restore mutated client IDs: %q/%q", client.workspaceRootID, client.createButtonID)
+	}
 }

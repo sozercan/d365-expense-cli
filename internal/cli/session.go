@@ -29,10 +29,36 @@ func runSession(args []string, stdout, stderr io.Writer) int {
 		return runSessionRemove(args[1:], stdout, stderr)
 	case "unlock":
 		return runSessionUnlock(args[1:], stdout, stderr)
+	case "cleanup-key":
+		return runSessionCleanupKey(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown session subcommand %q\n", args[0])
 		return 2
 	}
+}
+
+func runSessionCleanupKey(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("session cleanup-key", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	id := flags.String("id", "", "orphaned session encryption key ID")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 || *id == "" {
+		fmt.Fprintln(stderr, "session cleanup-key requires --id")
+		return 2
+	}
+	store, err := sessionstore.DefaultStore()
+	if err != nil {
+		fmt.Fprintf(stderr, "session cleanup-key: %v\n", err)
+		return 1
+	}
+	if err := store.CleanupKey(*id); err != nil {
+		fmt.Fprintf(stderr, "session cleanup-key: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "removed orphaned session encryption key")
+	return 0
 }
 
 func runSessionImport(args []string, stdout, stderr io.Writer) int {
@@ -79,14 +105,23 @@ func runSessionImport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "session import: %v\n", err)
 		return 1
 	}
-	if _, err := os.Lstat(path); err == nil && !*force {
-		fmt.Fprintf(stderr, "session import: session %q already exists; use --force to replace it\n", *name)
-		return 1
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	replaceExisting := false
+	if _, err := os.Lstat(path); err == nil {
+		if !*force {
+			fmt.Fprintf(stderr, "session import: session %q already exists; use --force to replace it\n", *name)
+			return 1
+		}
+		replaceExisting = true
+	} else if !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(stderr, "session import: inspect existing session: %v\n", err)
 		return 1
 	}
-	if err := store.Save(*name, standalone); err != nil {
+	if replaceExisting {
+		err = store.Replace(*name, standalone)
+	} else {
+		err = store.Save(*name, standalone)
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "session import: %v\n", err)
 		return 1
 	}

@@ -52,8 +52,10 @@ sessions, and stale workspace roots. It synthesizes only the known allowlisted
 `Click` target for **New expense report**; it does not need a captured click.
 
 A successful import stores a compact named session rather than the HAR's full
-response history. Existing complete Draft-flow HARs remain valid input, and
-`create` can consume a private workspace HAR directly with `--har`.
+response history. The session is authenticated and encrypted on disk with a
+per-session data key held by the operating system keyring. Existing complete
+Draft-flow HARs remain valid input, and `create` can consume a private workspace
+HAR directly with `--har`.
 
 ## Import sources and session management
 
@@ -75,6 +77,7 @@ d365-expense session list
 d365-expense session show work
 d365-expense session remove work
 d365-expense session unlock work
+d365-expense session cleanup-key <key-id>
 ```
 
 `session import work --force ...` intentionally replaces an existing name.
@@ -96,9 +99,9 @@ Names resolve under:
 --har <private-raw-har>
 ```
 
-Named-session mode acquires exclusive use of the session and persists advanced
-replay state after an operation. Direct HAR mode never modifies its input and
-must be treated as one-shot after a network operation begins.
+Named-session mode acquires exclusive use of the session and persists encrypted
+advanced replay state after an operation. Direct HAR mode never modifies its
+input and must be treated as one-shot after a network operation begins.
 
 Canonical mutating commands execute by default. `--dry-run` performs local
 validation and prints the plan without sending requests or changing named

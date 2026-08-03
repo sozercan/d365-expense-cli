@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -31,6 +32,7 @@ type combinedWorkflowOptions struct {
 	afterReceiptCount          int
 	activatedSubmitButton      map[string]any
 	confirmationSubmitButton   map[string]any
+	omitRestoredWorkspace      bool
 }
 
 type combinedWorkflowObservation struct {
@@ -131,6 +133,13 @@ func TestCreateReportWithReceiptUsesOneFreshSessionAndDynamicControls(t *testing
 	if !reflect.DeepEqual(result, want) {
 		t.Fatalf("CreateReportWithReceipts() = %#v, want %#v", result, want)
 	}
+	snapshot, err := client.SnapshotBootstrapProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.NewReport.RootID != "workspace-after-save" || snapshot.NewReport.TargetID != "new-report-after-save" {
+		t.Fatalf("snapshot NewReport = %#v", snapshot.NewReport)
+	}
 	if opened != 1 || observed.requestCount != 12 || !observed.finalSave {
 		t.Fatalf("opened=%d requests=%d finalSave=%t", opened, observed.requestCount, observed.finalSave)
 	}
@@ -221,6 +230,34 @@ func TestCreateReportWithReceiptDraftIgnoresIrrelevantSubmitButtonMetadata(t *te
 	}
 	if observed.requestCount != 12 || !observed.finalSave {
 		t.Fatalf("requests=%d finalSave=%t", observed.requestCount, observed.finalSave)
+	}
+}
+
+func TestCreateReportWithReceiptMarksMissingRestoredWorkspaceUncertain(t *testing.T) {
+	fileBytes := []byte("\x89PNG\r\n\x1a\nmissing-restored-workspace")
+	server, _ := newCombinedWorkflowServer(t, combinedWorkflowOptions{
+		createStatus:           "Draft",
+		includeActivatedButton: true,
+		postReceiptStatus:      "Draft",
+		afterReceiptCount:      1,
+		omitRestoredWorkspace:  true,
+	}, fileBytes)
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := expense.ReceiptUploadContractFromProfile(&capture.ReceiptProfile{Upload: validReceiptProfile("https://unused.invalid").Upload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := draftReportWithReceiptRequest("Missing restored workspace", "", contract, expense.ReceiptInput{
+		Filename: "receipt.png", MediaType: "image/png", Size: int64(len(fileBytes)),
+		Open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(fileBytes)), nil },
+	})
+	if _, err := client.CreateReportWithReceipts(context.Background(), request); !errors.Is(err, expense.ErrOperationUncertain) {
+		t.Fatalf("CreateReportWithReceipts() error = %v, want ErrOperationUncertain", err)
 	}
 }
 
@@ -567,9 +604,16 @@ func newCombinedWorkflowServer(t *testing.T, options combinedWorkflowOptions, fi
 		case 12:
 			assertSingleClick(t, request, "new-details", "save-after-receipt")
 			observed.finalSave = true
-			writeEnvelope(t, w, responseEnvelope(7, last, 61,
+			interactions := []json.RawMessage{
 				mustRaw(map[string]any{"$type": "UpdateModelInteraction", "RootId": "workspace", "Descriptor": map[string]any{"Id": "saved-row", "Properties": map[string]any{"ExpNumber_field": combinedReportNumber}}}),
-			))
+			}
+			if !options.omitRestoredWorkspace {
+				interactions = append([]json.RawMessage{viewModelInteraction(map[string]any{
+					"Id": "workspace-after-save", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{"Id": "new-report-after-save", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "CommandButton"}},
+				})}, interactions...)
+			}
+			writeEnvelope(t, w, responseEnvelope(7, last, 61, interactions...))
 		default:
 			t.Errorf("unexpected request stage %d", stage)
 			http.Error(w, "unexpected stage", http.StatusInternalServerError)

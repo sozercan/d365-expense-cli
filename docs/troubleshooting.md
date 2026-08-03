@@ -51,6 +51,25 @@ inspect the report in Dynamics, do not submit it again, and replace the session.
 A process may still be running or may have crashed. Verify no process is using
 the session. If the lock is stale, run `session unlock`, then re-import.
 
+### OS keyring is locked or unavailable
+
+Named sessions require the operating system credential store. On macOS, unlock
+the login Keychain. On Windows, run under the same user account that imported
+the session. On Linux, run inside a desktop login with an available Secret
+Service session; headless SSH, containers, cron, and minimal window-manager
+sessions may not provide one.
+
+The CLI never falls back to plaintext. If the encryption key was deleted or the
+session file was copied from another machine, remove that named session and
+import fresh authentication. Removing a session does not require decrypting it.
+
+If the CLI reports that a session file or replacement was committed but an old
+keyring entry could not be retired, unlock the keyring and run:
+
+```bash
+d365-expense session cleanup-key <key-id-from-the-error>
+```
+
 ### Receipt is not accepted
 
 Verify that the file:
@@ -96,5 +115,5 @@ Useful, non-secret information includes:
 - the CLI version; and
 - the exact error message after removing private paths.
 
-Never paste raw HAR contents, session JSON, cookies, headers, receipt images, or
-financial data into an issue.
+Never paste raw HAR contents, encrypted session envelopes, cookies, headers,
+receipt images, or financial data into an issue.

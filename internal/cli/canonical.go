@@ -88,11 +88,12 @@ func (command *receiptAttachCommand) Validate() error {
 }
 
 type sessionCommand struct {
-	Import sessionImportCommand `cmd:"" help:"Import a named session from a HAR or local CDP."`
-	List   sessionListCommand   `cmd:"" help:"List imported sessions."`
-	Show   sessionShowCommand   `cmd:"" help:"Show safe session metadata."`
-	Remove sessionRemoveCommand `cmd:"" help:"Remove a named session."`
-	Unlock sessionUnlockCommand `cmd:"" help:"Remove a stale session lock."`
+	Import     sessionImportCommand     `cmd:"" help:"Import a named session from a HAR or local CDP."`
+	List       sessionListCommand       `cmd:"" help:"List imported sessions."`
+	Show       sessionShowCommand       `cmd:"" help:"Show safe session metadata."`
+	Remove     sessionRemoveCommand     `cmd:"" help:"Remove a named session."`
+	Unlock     sessionUnlockCommand     `cmd:"" help:"Remove a stale session lock."`
+	CleanupKey sessionCleanupKeyCommand `cmd:"" name:"cleanup-key" help:"Remove an orphaned session encryption key after a reported partial cleanup failure."`
 }
 
 type sessionImportCommand struct {
@@ -123,6 +124,9 @@ type sessionRemoveCommand struct {
 }
 type sessionUnlockCommand struct {
 	Name string `arg:"" name:"name" help:"Session name."`
+}
+type sessionCleanupKeyCommand struct {
+	ID string `arg:"" name:"key-id" help:"Encryption key ID reported by a partial cleanup error."`
 }
 
 type harCommand struct {
@@ -162,6 +166,7 @@ type legacyRunners struct {
 	sessionInspect           func([]string, io.Writer, io.Writer) int
 	sessionRemove            func([]string, io.Writer, io.Writer) int
 	sessionUnlock            func([]string, io.Writer, io.Writer) int
+	sessionCleanupKey        func([]string, io.Writer, io.Writer) int
 	harInspect               func([]string, io.Writer, io.Writer) int
 	harCapture               func([]string, io.Writer, io.Writer) int
 }
@@ -177,6 +182,7 @@ func defaultLegacyRunners() legacyRunners {
 		sessionInspect:           runSessionInspect,
 		sessionRemove:            runSessionRemove,
 		sessionUnlock:            runSessionUnlock,
+		sessionCleanupKey:        runSessionCleanupKey,
 		harInspect:               runInspect,
 		harCapture:               runCaptureDraft,
 	}
@@ -296,6 +302,9 @@ func (command *sessionRemoveCommand) Run(rt *commandRuntime) error {
 }
 func (command *sessionUnlockCommand) Run(rt *commandRuntime) error {
 	return invokeLegacy(rt.runners.sessionUnlock, []string{"--name", command.Name}, rt)
+}
+func (command *sessionCleanupKeyCommand) Run(rt *commandRuntime) error {
+	return invokeLegacy(rt.runners.sessionCleanupKey, []string{"--id", command.ID}, rt)
 }
 func (command *harInspectCommand) Run(rt *commandRuntime) error {
 	return invokeLegacy(rt.runners.harInspect, []string{"--har", command.Path}, rt)

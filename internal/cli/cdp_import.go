@@ -61,10 +61,14 @@ func runSessionImportCDP(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "session import-cdp: %v\n", err)
 		return 1
 	}
-	if _, err := os.Lstat(path); err == nil && !*force {
-		fmt.Fprintf(stderr, "session import-cdp: session %q already exists; use --force to replace it\n", *name)
-		return 1
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	replaceExisting := false
+	if _, err := os.Lstat(path); err == nil {
+		if !*force {
+			fmt.Fprintf(stderr, "session import-cdp: session %q already exists; use --force to replace it\n", *name)
+			return 1
+		}
+		replaceExisting = true
+	} else if !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(stderr, "session import-cdp: inspect existing session: %v\n", err)
 		return 1
 	}
@@ -117,7 +121,12 @@ func runSessionImportCDP(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "session import-cdp: %v\n", err)
 		return 1
 	}
-	if err := store.Save(*name, standalone); err != nil {
+	if replaceExisting {
+		err = store.Replace(*name, standalone)
+	} else {
+		err = store.Save(*name, standalone)
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "session import-cdp: %v\n", err)
 		return 1
 	}
