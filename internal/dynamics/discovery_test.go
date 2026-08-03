@@ -116,6 +116,36 @@ func TestDiscoverResponseModelRecursesThroughFormsControlsAndProperties(t *testi
 	}
 }
 
+func TestDiscoverResponseModelRequiresUniqueFormRoot(t *testing.T) {
+	fixture := []byte(`{
+		"Descriptors":[
+			{"Id":"workspace-a","Name":"ExpenseWorkspace_form","TypeName":"Form"},
+			{"Id":"workspace-b","Name":"ExpenseWorkspace_form","TypeName":"Form"}
+		]
+	}`)
+	model, err := dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace); ok || form.ID != "" {
+		t.Fatalf("FindUniqueForm() = %#v, %v; want ambiguity", form, ok)
+	}
+
+	fixture = []byte(`{
+		"Descriptors":[
+			{"Id":"workspace","Name":"ExpenseWorkspace_form","TypeName":"Form"},
+			{"Id":"workspace","Name":"ExpenseWorkspace_form","TypeName":"Form","ValueProperties":{"Caption":"updated"}}
+		]
+	}`)
+	model, err = dynamics.DiscoverResponseModel(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace); !ok || form.ID != "workspace" {
+		t.Fatalf("FindUniqueForm() = %#v, %v; want repeated workspace ID", form, ok)
+	}
+}
+
 func TestDiscoverResponseModelPrefersSubmitButtonInDetailsRoot(t *testing.T) {
 	fixture := []byte(`{
 		"Descriptors":[

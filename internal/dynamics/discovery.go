@@ -36,6 +36,7 @@ type ResponseModel struct {
 	Status       string
 
 	controlsByRoot map[string]map[string]ModelNode
+	formsByName    map[string]map[string]ModelNode
 }
 
 // DiscoverResponseModel recursively searches any JSON response value. It does
@@ -62,8 +63,10 @@ func DiscoverResponseModel(data []byte) (ResponseModel, error) {
 			Forms:          make(map[string]ModelNode),
 			Controls:       make(map[string]ModelNode),
 			controlsByRoot: make(map[string]map[string]ModelNode),
+			formsByName:    make(map[string]map[string]ModelNode),
 		},
 		formScores:        make(map[string]int),
+		formIDScores:      make(map[string]map[string]int),
 		controlScores:     make(map[string]int),
 		controlRootScores: make(map[string]map[string]int),
 	}
@@ -91,6 +94,22 @@ func DiscoverEnvelopeModel(envelope Envelope) (ResponseModel, error) {
 func (model ResponseModel) FindForm(name string) (ModelNode, bool) {
 	node, ok := model.Forms[name]
 	return node, ok
+}
+
+// FindUniqueForm returns a form only when the response contains one distinct
+// form ID for the exact Name. Repeated deltas for the same ID are allowed;
+// competing roots are ambiguous and fail closed.
+func (model ResponseModel) FindUniqueForm(name string) (ModelNode, bool) {
+	forms := model.formsByName[name]
+	if len(forms) == 1 {
+		for _, form := range forms {
+			return form, true
+		}
+	}
+	if len(forms) > 1 {
+		return ModelNode{}, false
+	}
+	return model.FindForm(name)
 }
 
 // FindControl looks up a recursively discovered control by exact Name.
@@ -129,6 +148,7 @@ func (model ResponseModel) FindModel(name string) (ModelNode, bool) {
 type discoveryState struct {
 	model             ResponseModel
 	formScores        map[string]int
+	formIDScores      map[string]map[string]int
 	controlScores     map[string]int
 	controlRootScores map[string]map[string]int
 	report            propertyCandidate
@@ -169,7 +189,7 @@ func (state *discoveryState) walk(value any, path []string, rootID, rootName str
 			score := modelObjectScore(typed, rootID != "")
 			if isForm {
 				node.RootID = id
-				state.keepNode(state.model.Forms, state.formScores, node, score)
+				state.keepForm(node, score)
 			} else {
 				state.keepControl(node, score)
 			}
@@ -211,6 +231,22 @@ func (state *discoveryState) keepNode(nodes map[string]ModelNode, scores map[str
 	}
 	nodes[node.Name] = node
 	scores[node.Name] = score
+}
+
+func (state *discoveryState) keepForm(node ModelNode, score int) {
+	state.keepNode(state.model.Forms, state.formScores, node, score)
+	if state.model.formsByName[node.Name] == nil {
+		state.model.formsByName[node.Name] = make(map[string]ModelNode)
+	}
+	if state.formIDScores[node.Name] == nil {
+		state.formIDScores[node.Name] = make(map[string]int)
+	}
+	previousScore, exists := state.formIDScores[node.Name][node.ID]
+	if exists && previousScore >= score {
+		return
+	}
+	state.model.formsByName[node.Name][node.ID] = node
+	state.formIDScores[node.Name][node.ID] = score
 }
 
 func (state *discoveryState) keepControl(node ModelNode, score int) {

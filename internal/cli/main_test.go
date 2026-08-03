@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/sozercan/d365-expense-cli/internal/expense"
 )
 
 func TestHelpAndSubmitMode(t *testing.T) {
@@ -47,33 +49,58 @@ func TestCreateDraftRequiresExplicitInputs(t *testing.T) {
 	}
 }
 
-func TestCreateReportFailureWarnsDirectHARSubmitUsersNotToRetry(t *testing.T) {
+func TestCreateReportFailureWarnsUncertainUsersNotToRetry(t *testing.T) {
 	t.Parallel()
 
+	uncertain := func(cause error) error {
+		return errors.Join(expense.ErrOperationUncertain, cause)
+	}
 	tests := []struct {
-		name     string
-		harPath  string
-		submit   bool
-		wantWarn bool
+		name         string
+		harPath      string
+		submit       bool
+		operationErr error
+		wantOutcome  string
+		wantWarning  string
 	}{
-		{name: "direct HAR submit", harPath: "capture.har", submit: true, wantWarn: true},
-		{name: "named session submit", submit: true, wantWarn: false},
-		{name: "direct HAR draft", harPath: "capture.har", wantWarn: false},
+		{
+			name: "direct HAR uncertain submit", harPath: "capture.har", submit: true,
+			operationErr: uncertain(errors.New("response verification failed")),
+			wantOutcome:  "created or submitted",
+			wantWarning:  "do not retry with the same HAR",
+		},
+		{
+			name: "named session late authentication failure", submit: true,
+			operationErr: uncertain(expense.ErrAuthenticationExpired),
+			wantOutcome:  "created or submitted",
+			wantWarning:  "do not re-import and retry this expense operation",
+		},
+		{
+			name: "named session early authentication failure", submit: true,
+			operationErr: expense.ErrAuthenticationExpired,
+		},
+		{
+			name: "direct HAR draft uncertainty", harPath: "capture.har",
+			operationErr: uncertain(errors.New("save response failed")),
+			wantOutcome:  "created or saved",
+			wantWarning:  "do not retry with the same HAR",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			var stderr bytes.Buffer
-			writeCreateReportOperationFailure(&stderr, test.harPath, test.submit, errors.New("response verification failed"), nil)
+			writeCreateReportOperationFailure(&stderr, test.harPath, test.submit, test.operationErr, nil)
 
 			output := stderr.String()
-			if !strings.Contains(output, "response verification failed") {
-				t.Fatalf("stderr omitted operation error: %q", output)
-			}
-			for _, warning := range []string{"may already have been submitted", "do not retry with the same HAR"} {
-				if got := strings.Contains(output, warning); got != test.wantWarn {
-					t.Fatalf("stderr warning %q present = %t, want %t: %q", warning, got, test.wantWarn, output)
+			if test.wantWarning == "" {
+				if strings.Contains(output, "may already have been") {
+					t.Fatalf("unexpected uncertainty warning: %q", output)
 				}
+				return
+			}
+			if !strings.Contains(output, "may already have been "+test.wantOutcome) || !strings.Contains(output, test.wantWarning) {
+				t.Fatalf("stderr = %q, want warning %q", output, test.wantWarning)
 			}
 		})
 	}

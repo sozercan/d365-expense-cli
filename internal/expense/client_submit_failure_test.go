@@ -3,6 +3,7 @@ package expense_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,7 +55,21 @@ func TestCreateAndSubmitRequiresVerifiedStatusAndRestoredWorkspace(t *testing.T)
 			finalInteractions: []json.RawMessage{
 				submitStatusInteraction("2"),
 			},
-			wantError: "did not restore",
+			wantError: "did not uniquely restore",
+		},
+		{
+			name: "ambiguous restored workspaces",
+			finalInteractions: []json.RawMessage{
+				submitStatusInteraction("2"),
+				submitWorkspaceInteraction(),
+				viewModelInteraction(map[string]any{
+					"Id": "stale-workspace", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{
+						"Id": "stale-new-report", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "MenuItemButton",
+					}},
+				}),
+			},
+			wantError: "did not uniquely restore",
 		},
 	}
 
@@ -110,6 +125,57 @@ func TestCreateAndSubmitRequiresVerifiedStatusAndRestoredWorkspace(t *testing.T)
 				t.Fatalf("requests = %d, want 3", stage)
 			}
 		})
+	}
+}
+
+func TestCreateAndSubmitMarksLateAuthenticationFailureUncertain(t *testing.T) {
+	stage := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		stage++
+		var envelope dynamics.Envelope
+		if err := json.NewDecoder(request.Body).Decode(&envelope); err != nil {
+			t.Fatal(err)
+		}
+		last := envelope.Messages[len(envelope.Messages)-1].SequenceNumber
+		w.Header().Set("Content-Type", "application/json")
+		switch stage {
+		case 1:
+			writeEnvelope(t, w, responseEnvelope(7, last, 51,
+				viewModelInteraction(map[string]any{
+					"Id": "submit-dialog", "Name": dynamics.FormExpenseNewExpenseReport, "TypeName": "Dialog",
+					"ChildViewModels": []any{map[string]any{"Id": "submit-purpose", "Name": dynamics.ControlNamePurpose, "TypeName": "Input"}},
+				}),
+			))
+		case 2:
+			writeEnvelope(t, w, responseEnvelope(7, last, 52,
+				viewModelInteraction(map[string]any{
+					"Id": "submit-details", "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
+					"ChildModelCollections": map[string]any{"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{
+						"Id": "record", "Properties": map[string]any{"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-AUTH", "expenseReportStatus_dataMethod": "Draft"},
+					}}}}},
+					"ChildViewModels": []any{
+						map[string]any{"Id": "submit-save", "Name": dynamics.ControlSaveAndClose, "TypeName": "CommandButton"},
+						submitButtonDescriptor("submit-target"),
+					},
+				}),
+			))
+		case 3:
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			t.Fatalf("unexpected stage %d", stage)
+		}
+	}))
+	defer server.Close()
+
+	client, err := expense.New(validProfile(server.URL), expense.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.CreateReport(context.Background(), expense.CreateReportRequest{
+		Purpose: "Late auth failure", FinalAction: expense.ReportFinalActionSubmit,
+	})
+	if !errors.Is(err, expense.ErrAuthenticationExpired) || !errors.Is(err, expense.ErrOperationUncertain) {
+		t.Fatalf("error = %v, want authentication-expired and operation-uncertain markers", err)
 	}
 }
 

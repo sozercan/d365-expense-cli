@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -157,11 +158,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 		checkpointErr = execution.finish(operationErr)
 	}
 	if operationErr != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", commandName, operationErr)
-		fmt.Fprintln(stderr, "the report may contain earlier receipts and its final state may be uncertain; do not retry with the same session or HAR")
-		if checkpointErr != nil {
-			fmt.Fprintf(stderr, "%s: session checkpoint also failed: %v\n", commandName, checkpointErr)
-		}
+		writeCreateReportWithReceiptsOperationFailure(stderr, commandName, operationErr, checkpointErr)
 		return 1
 	}
 	if result.Submitted {
@@ -182,6 +179,16 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 		return 1
 	}
 	return 0
+}
+
+func writeCreateReportWithReceiptsOperationFailure(stderr io.Writer, commandName string, operationErr, checkpointErr error) {
+	fmt.Fprintf(stderr, "%s: %v\n", commandName, operationErr)
+	if errors.Is(operationErr, expense.ErrOperationUncertain) {
+		fmt.Fprintln(stderr, "the report may contain earlier receipts and its final state may be uncertain; do not retry with the same session or HAR")
+	}
+	if checkpointErr != nil {
+		fmt.Fprintf(stderr, "%s: session checkpoint also failed: %v\n", commandName, checkpointErr)
+	}
 }
 
 func receiptInputsFromPaths(paths []string, notes string, maxSize int64) ([]expense.CreateReportReceiptInput, error) {

@@ -178,8 +178,16 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 
 func writeCreateReportOperationFailure(stderr io.Writer, harPath string, submit bool, operationErr, checkpointErr error) {
 	fmt.Fprintf(stderr, "create-draft: %v\n", operationErr)
-	if harPath != "" && submit {
-		fmt.Fprintln(stderr, "the report may already have been submitted and its final state may be uncertain; do not retry with the same HAR")
+	if errors.Is(operationErr, expense.ErrOperationUncertain) {
+		outcome := "created or saved"
+		if submit {
+			outcome = "created or submitted"
+		}
+		if harPath != "" {
+			fmt.Fprintf(stderr, "the report may already have been %s and its final state may be uncertain; do not retry with the same HAR\n", outcome)
+		} else {
+			fmt.Fprintf(stderr, "the report may already have been %s and its final state may be uncertain; verify Dynamics and do not re-import and retry this expense operation\n", outcome)
+		}
 	}
 	if checkpointErr != nil {
 		fmt.Fprintf(stderr, "create-draft: session checkpoint also failed: %v\n", checkpointErr)

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/sozercan/d365-expense-cli/internal/capture"
+	"github.com/sozercan/d365-expense-cli/internal/expense"
 	sessionstore "github.com/sozercan/d365-expense-cli/internal/session"
 )
 
@@ -62,6 +63,50 @@ func TestNamedSessionExecutionCheckpointsStatus(t *testing.T) {
 	}
 	if _, err := beginNamedSessionExecution("work"); err == nil {
 		t.Fatal("uncertain session was accepted for execution")
+	}
+
+	lateAuth, err := sessionstore.FromBootstrap(testBootstrapProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("late-auth", lateAuth); err != nil {
+		t.Fatal(err)
+	}
+	execution, err = beginNamedSessionExecution("late-auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := execution.finish(errors.Join(expense.ErrOperationUncertain, expense.ErrAuthenticationExpired)); err != nil {
+		t.Fatal(err)
+	}
+	lateAuth, err = store.Load("late-auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lateAuth.Status != sessionstore.StatusUncertain {
+		t.Fatalf("late-auth status = %q, want uncertain", lateAuth.Status)
+	}
+
+	earlyAuth, err := sessionstore.FromBootstrap(testBootstrapProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("early-auth", earlyAuth); err != nil {
+		t.Fatal(err)
+	}
+	execution, err = beginNamedSessionExecution("early-auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := execution.finish(expense.ErrAuthenticationExpired); err != nil {
+		t.Fatal(err)
+	}
+	earlyAuth, err = store.Load("early-auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if earlyAuth.Status != sessionstore.StatusExpired {
+		t.Fatalf("early-auth status = %q, want expired", earlyAuth.Status)
 	}
 }
 

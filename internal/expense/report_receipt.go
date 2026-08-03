@@ -70,7 +70,13 @@ func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithRecei
 // CreateReportWithReceipts creates a report, attaches every receipt, and
 // performs the request's explicit final action. It does not approve, post,
 // recall, or run generic workflow commands.
-func (client *Client) CreateReportWithReceipts(ctx context.Context, request CreateReportWithReceiptsRequest) (CreateReportWithReceiptsResult, error) {
+func (client *Client) CreateReportWithReceipts(ctx context.Context, request CreateReportWithReceiptsRequest) (result CreateReportWithReceiptsResult, err error) {
+	mutationStarted := false
+	defer func() {
+		if mutationStarted && err != nil {
+			err = markOperationUncertain(err)
+		}
+	}()
 	if client == nil {
 		return CreateReportWithReceiptsResult{}, errors.New("expense: client is nil")
 	}
@@ -95,6 +101,7 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 	if err != nil {
 		return CreateReportWithReceiptsResult{}, err
 	}
+	mutationStarted = true
 	if request.FinalAction == ReportFinalActionSubmit {
 		if err := dynamics.ValidateSubmitButton(draft.submitButton, draft.detailsRootID); err != nil {
 			return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)

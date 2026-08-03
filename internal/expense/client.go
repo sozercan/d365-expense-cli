@@ -31,6 +31,27 @@ var errRedirect = errors.New("expense: redirects are not allowed")
 // ErrAuthenticationExpired indicates that Dynamics redirected to sign-in or rejected the captured credentials.
 var ErrAuthenticationExpired = errRedirect
 
+// ErrOperationUncertain marks an error returned after a request may already
+// have created or mutated an expense report. Callers must not treat a nested
+// authentication failure as proof that the remote mutation did not happen.
+var ErrOperationUncertain = errors.New("expense: remote operation outcome is uncertain")
+
+type operationUncertainError struct {
+	cause error
+}
+
+func (err *operationUncertainError) Error() string { return err.cause.Error() }
+func (err *operationUncertainError) Unwrap() []error {
+	return []error{ErrOperationUncertain, err.cause}
+}
+
+func markOperationUncertain(err error) error {
+	if err == nil || errors.Is(err, ErrOperationUncertain) {
+		return err
+	}
+	return &operationUncertainError{cause: err}
+}
+
 // Option is a sealed Client configuration option.
 type Option interface {
 	apply(*clientOptions) error
@@ -238,7 +259,7 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 	if request.FinalAction == ReportFinalActionSubmit {
 		status, err := client.submitOpenDraft(ctx, draft.reportNumber, draft.detailsRootID, draft.submitButton)
 		if err != nil {
-			return ReportResult{}, err
+			return ReportResult{}, markOperationUncertain(err)
 		}
 		return ReportResult{
 			Purpose:      request.Purpose,
@@ -253,7 +274,7 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 		DetailsRootID:  draft.detailsRootID,
 		SaveAndCloseID: draft.saveAndCloseID,
 	}); err != nil {
-		return ReportResult{}, fmt.Errorf("expense: save and close draft: %w", err)
+		return ReportResult{}, markOperationUncertain(fmt.Errorf("expense: save and close draft: %w", err))
 	}
 
 	return ReportResult{
@@ -276,7 +297,13 @@ type openDraftDetails struct {
 // createDraftDetails creates a Draft and leaves its details form open. The
 // caller must hold client.mu and reserve enough sequence headroom for its
 // remaining workflow.
-func (client *Client) createDraftDetails(ctx context.Context, purpose string) (openDraftDetails, error) {
+func (client *Client) createDraftDetails(ctx context.Context, purpose string) (result openDraftDetails, err error) {
+	creationAttempted := false
+	defer func() {
+		if creationAttempted && err != nil {
+			err = markOperationUncertain(err)
+		}
+	}()
 	openSequence := client.nextClientSequence
 	open := dynamics.BuildOpenNewExpenseReportMessage(openSequence, client.workspaceRootID, client.createButtonID)
 	openBody, err := client.send(ctx, []dynamics.Message{open}, dynamics.DraftCommandTargets{
@@ -303,6 +330,7 @@ func (client *Client) createDraftDetails(ctx context.Context, purpose string) (o
 	setSequence := client.nextClientSequence
 	set := dynamics.BuildSetValueMessage(setSequence, dialog.ID, purposeControl.ID, purpose, "", "")
 	invoke := dynamics.BuildInvokeDefaultButtonMessage(setSequence+1, dialog.ID)
+	creationAttempted = true
 	createBody, err := client.send(ctx, []dynamics.Message{set, invoke}, dynamics.DraftCommandTargets{
 		DialogRootID:  dialog.ID,
 		NamePurposeID: purposeControl.ID,
@@ -373,9 +401,9 @@ func (client *Client) submitOpenDraft(ctx context.Context, reportNumber, details
 	if err != nil {
 		return "", err
 	}
-	workspace, ok := model.FindForm(dynamics.FormExpenseWorkspace)
+	workspace, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace)
 	if !ok || workspace.ID == "" {
-		return "", errors.New("expense: submit response did not restore the Expense workspace")
+		return "", errors.New("expense: submit response did not uniquely restore the Expense workspace")
 	}
 	newReport, ok := model.FindControlInRoot(dynamics.SelectedControlNewExpenseReportReportsTab, workspace.ID)
 	if !ok || newReport.ID == "" {
