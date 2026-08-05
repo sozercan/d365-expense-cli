@@ -137,7 +137,10 @@ func TestCreateReportSaveDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T)
 				t.Errorf("save commands = %#v", commands)
 			}
 			writeEnvelope(t, w, responseEnvelope(7, 83, 53,
-				viewModelInteraction(map[string]any{"Id": "workspace-after-save", "Name": "ExpenseWorkspace_form", "TypeName": "Form"}),
+				viewModelInteraction(map[string]any{
+					"Id": "workspace-after-save", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
+					"ChildViewModels": []any{map[string]any{"Id": "new-report-after-save", "Name": dynamics.SelectedControlNewExpenseReportReportsTab, "TypeName": "CommandButton"}},
+				}),
 			))
 		default:
 			t.Errorf("unexpected request %d", requestNumber.Load())
@@ -173,6 +176,13 @@ func TestCreateReportSaveDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T)
 	}
 	if want := (expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); report != want {
 		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
+	}
+	snapshot, err := client.SnapshotBootstrapProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.NewReport.RootID != "workspace-after-save" || snapshot.NewReport.TargetID != "new-report-after-save" {
+		t.Fatalf("snapshot NewReport = %#v", snapshot.NewReport)
 	}
 	if requestNumber.Load() != 3 {
 		t.Fatalf("requests = %d, want 3", requestNumber.Load())

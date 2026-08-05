@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -58,6 +59,7 @@ func TestResolveDefaultStoreUsesUserConfigDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDefaultStore() error = %v", err)
 	}
+	store.keys = newMemoryKeyProvider()
 	if got, want := store.Dir, filepath.Join(userConfig, canonicalConfigDirectory, "sessions"); got != want {
 		t.Fatalf("Dir = %q, want %q", got, want)
 	}
@@ -81,7 +83,8 @@ func TestDefaultStoreForRootsFallsBackToExistingLegacySessions(t *testing.T) {
 	root := t.TempDir()
 	canonical := filepath.Join(root, "config", canonicalConfigDirectory)
 	legacy := filepath.Join(root, "home", legacyConfigDirectory)
-	legacyStore, err := NewStore(legacy)
+	provider := newMemoryKeyProvider()
+	legacyStore, err := NewStore(legacy, WithKeyProvider(provider))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +100,7 @@ func TestDefaultStoreForRootsFallsBackToExistingLegacySessions(t *testing.T) {
 	if store.configDir != legacy {
 		t.Fatalf("configDir = %q, want legacy %q", store.configDir, legacy)
 	}
+	store.keys = provider
 	if _, err := os.Lstat(canonical); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy fallback unexpectedly created or migrated canonical store: %v", err)
 	}
@@ -113,7 +117,7 @@ func TestDefaultStoreForRootsPrefersCanonicalWhenOnlyCanonicalHasSessions(t *tes
 	root := t.TempDir()
 	canonical := filepath.Join(root, "config", canonicalConfigDirectory)
 	legacy := filepath.Join(root, "home", legacyConfigDirectory)
-	canonicalStore, err := NewStore(canonical)
+	canonicalStore, err := NewStore(canonical, WithKeyProvider(newMemoryKeyProvider()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +139,7 @@ func TestDefaultStoreForRootsRejectsConflictingSessionStores(t *testing.T) {
 	canonical := filepath.Join(root, "config", canonicalConfigDirectory)
 	legacy := filepath.Join(root, "home", legacyConfigDirectory)
 	for _, configDir := range []string{canonical, legacy} {
-		store, err := NewStore(configDir)
+		store, err := NewStore(configDir, WithKeyProvider(newMemoryKeyProvider()))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +184,7 @@ func TestDefaultStoreForRootsRejectsUnsafeLegacySessionFile(t *testing.T) {
 	root := t.TempDir()
 	canonical := filepath.Join(root, "config", canonicalConfigDirectory)
 	legacy := filepath.Join(root, "home", legacyConfigDirectory)
-	legacyStore, err := NewStore(legacy)
+	legacyStore, err := NewStore(legacy, WithKeyProvider(newMemoryKeyProvider()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +242,19 @@ func TestStoreOwnerOnlyRoundTripInspectListAndRemove(t *testing.T) {
 	}
 	if err := store.Save("alpha", alpha); err != nil {
 		t.Fatalf("Save(alpha) error = %v", err)
+	}
+	alphaPath, _ := store.Path("alpha")
+	alphaBytes, err := os.ReadFile(alphaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(alphaBytes), encryptedSessionMagic) {
+		t.Fatalf("session file does not use encrypted envelope")
+	}
+	for _, secret := range []string{"header-secret", "cookie-secret", "csrf-cookie-secret", "new-report-target", "cmp=USMF"} {
+		if bytes.Contains(alphaBytes, []byte(secret)) {
+			t.Fatalf("encrypted session file leaked %q", secret)
+		}
 	}
 
 	if runtime.GOOS != "windows" {
@@ -351,11 +368,11 @@ func TestStoreAtomicallyReplacesAndLeavesNoTemporaryFiles(t *testing.T) {
 
 func TestLoadRejectsUnknownFieldsTrailingDataAndUnsupportedVersion(t *testing.T) {
 	store := newTestStore(t)
-	if err := store.Save("work", validSession(t)); err != nil {
+	if err := store.ensureDirectories(); err != nil {
 		t.Fatal(err)
 	}
 	path, _ := store.Path("work")
-	original, err := os.ReadFile(path)
+	original, err := encodeSession(validSession(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +523,7 @@ func TestLoadRejectsOversizedSessionFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, _ := store.Path("large")
-	if err := os.WriteFile(path, make([]byte, maxSessionFile+1), 0o600); err != nil {
+	if err := os.WriteFile(path, make([]byte, maxEncryptedSessionFile+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Load("large"); err == nil || !strings.Contains(err.Error(), "exceeds") {
@@ -529,7 +546,7 @@ func TestListRejectsMalformedOwnedSessionFilename(t *testing.T) {
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := NewStore(filepath.Join(t.TempDir(), "config"))
+	store, err := NewStore(filepath.Join(t.TempDir(), "config"), WithKeyProvider(newMemoryKeyProvider()))
 	if err != nil {
 		t.Fatal(err)
 	}

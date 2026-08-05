@@ -89,9 +89,18 @@ Override the root with:
 export D365_EXPENSE_CONFIG_DIR=/private/path/to/d365-expense
 ```
 
-On Unix-like systems, configuration directories are owner-only (`0700`) and
-session files are owner-only (`0600`). Symlinks and broadly accessible session
-files are rejected.
+Session files are authenticated and encrypted with a per-session key held by
+the operating system keyring (macOS Keychain, Windows Credential Manager, or
+Linux Secret Service). On Unix-like systems, configuration directories are
+owner-only (`0700`) and encrypted session files are owner-only (`0600`).
+Symlinks and broadly accessible session files are rejected. If the keyring is
+locked or unavailable, the CLI fails closed instead of writing plaintext.
+
+Legacy plaintext sessions are still readable. The next executing named-session
+command migrates the file when it writes its pre-network `in_progress`
+checkpoint, so no browser reauthentication is required solely for migration.
+Session names are bound into authenticated encryption; use the exact casing
+shown by `session list`, including on case-insensitive filesystems.
 
 ## Remove credentials
 
@@ -100,6 +109,14 @@ d365-expense session remove work
 ```
 
 Also delete any raw HAR used for import when it is no longer needed.
+
+If removal or forced replacement reports that the session file was committed
+but an old key could not be removed, retry the keyring cleanup using the exact
+non-secret key ID from that error:
+
+```bash
+d365-expense session cleanup-key <key-id>
+```
 
 ## Direct HAR mode
 

@@ -270,11 +270,15 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 	}
 
 	save := dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, draft.detailsRootID, draft.saveAndCloseID)
-	if _, err := client.send(ctx, []dynamics.Message{save}, dynamics.DraftCommandTargets{
+	saveBody, err := client.send(ctx, []dynamics.Message{save}, dynamics.DraftCommandTargets{
 		DetailsRootID:  draft.detailsRootID,
 		SaveAndCloseID: draft.saveAndCloseID,
-	}); err != nil {
+	})
+	if err != nil {
 		return ReportResult{}, markOperationUncertain(fmt.Errorf("expense: save and close draft: %w", err))
+	}
+	if err := client.restoreWorkspace(saveBody, "save and close response"); err != nil {
+		return ReportResult{}, markOperationUncertain(err)
 	}
 
 	return ReportResult{
@@ -397,21 +401,28 @@ func (client *Client) submitOpenDraft(ctx context.Context, reportNumber, details
 	if !isSubmittedStatus(status) {
 		return "", fmt.Errorf("expense: submit response did not affirmatively report the created report as Submitted: %q", status)
 	}
+	if err := client.restoreWorkspace(body, "submit response"); err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
+func (client *Client) restoreWorkspace(body []byte, source string) error {
 	model, err := dynamics.DiscoverResponseModel(body)
 	if err != nil {
-		return "", err
+		return err
 	}
 	workspace, ok := model.FindUniqueForm(dynamics.FormExpenseWorkspace)
 	if !ok || workspace.ID == "" {
-		return "", errors.New("expense: submit response did not uniquely restore the Expense workspace")
+		return fmt.Errorf("expense: %s did not uniquely restore the Expense workspace", source)
 	}
 	newReport, ok := model.FindControlInRoot(dynamics.SelectedControlNewExpenseReportReportsTab, workspace.ID)
 	if !ok || newReport.ID == "" {
-		return "", errors.New("expense: submit response did not restore the New expense report control")
+		return fmt.Errorf("expense: %s did not restore the New expense report control", source)
 	}
 	client.workspaceRootID = workspace.ID
 	client.createButtonID = newReport.ID
-	return status, nil
+	return nil
 }
 
 func (client *Client) send(ctx context.Context, messages []dynamics.Message, targets dynamics.DraftCommandTargets) ([]byte, error) {

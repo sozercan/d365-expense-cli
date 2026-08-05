@@ -2,8 +2,9 @@
 // to create expense drafts without a running browser. The canonical store is
 // rooted at os.UserConfigDir()/d365-expense; DefaultStore also supports the
 // legacy msexpense environment and home-directory store as explicit,
-// non-merging compatibility fallbacks. Session files are plaintext secrets;
-// callers should expose only Summary values in logs.
+// non-merging compatibility fallbacks. Session files are authenticated and
+// encrypted with keys held in the operating system keyring; callers should
+// expose only Summary values in logs.
 package session
 
 import (

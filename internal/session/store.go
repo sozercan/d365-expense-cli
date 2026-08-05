@@ -1,11 +1,8 @@
 package session
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,16 +17,34 @@ const (
 	legacyConfigDirectory      = ".msexpense"
 	sessionFileSuffix          = ".session.json"
 	temporaryFilePattern       = ".d365-expense-session-*"
-	maxSessionFile             = 1 << 20
+	maxSessionPlaintext        = 1 << 20
+	maxEncryptedSessionFile    = 2 << 20
 )
 
-// Store manages named owner-only session files.
+// Store manages named encrypted session files and their OS-keyring keys.
 type Store struct {
 	// Dir is the directory containing session files. Direct construction is
 	// supported for tests; DefaultStore and NewStore also protect ConfigDir.
 	Dir string
 
 	configDir string
+	keys      KeyProvider
+	syncDir   func(string) error
+}
+
+// StoreOption customizes a Store. It primarily supports deterministic tests
+// without contacting the developer's real operating system keyring.
+type StoreOption func(*Store) error
+
+// WithKeyProvider replaces the OS-keyring provider for this Store.
+func WithKeyProvider(provider KeyProvider) StoreOption {
+	return func(store *Store) error {
+		if provider == nil {
+			return errors.New("session key provider is nil")
+		}
+		store.keys = provider
+		return nil
+	}
 }
 
 // DefaultStore resolves exactly one session store. D365_EXPENSE_CONFIG_DIR has
@@ -39,8 +54,15 @@ type Store struct {
 // store is used only when the canonical default contains no sessions. The two
 // default stores are never merged; if both contain sessions, resolution fails
 // and the caller must select one explicitly with D365_EXPENSE_CONFIG_DIR.
-func DefaultStore() (*Store, error) {
-	return resolveDefaultStore(os.Getenv, os.UserConfigDir, os.UserHomeDir)
+func DefaultStore(options ...StoreOption) (*Store, error) {
+	store, err := resolveDefaultStore(os.Getenv, os.UserConfigDir, os.UserHomeDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyStoreOptions(store, options); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func resolveDefaultStore(
@@ -191,13 +213,29 @@ func configStoreHasSessions(configDir string) (bool, error) {
 }
 
 // NewStore returns a store rooted at configDir/sessions.
-func NewStore(configDir string) (*Store, error) {
+func NewStore(configDir string, options ...StoreOption) (*Store, error) {
 	configDir = strings.TrimSpace(configDir)
 	if configDir == "" {
 		return nil, errors.New("session config directory is required")
 	}
 	configDir = filepath.Clean(configDir)
-	return &Store{Dir: filepath.Join(configDir, "sessions"), configDir: configDir}, nil
+	store := &Store{Dir: filepath.Join(configDir, "sessions"), configDir: configDir}
+	if err := applyStoreOptions(store, options); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+func applyStoreOptions(store *Store, options []StoreOption) error {
+	for _, option := range options {
+		if option == nil {
+			return errors.New("session store option is nil")
+		}
+		if err := option(store); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Path returns the validated path for a named session.
@@ -209,119 +247,6 @@ func (store *Store) Path(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(store.Dir, name+sessionFileSuffix), nil
-}
-
-// Save atomically writes a validated session with mode 0600.
-func (store *Store) Save(name string, session *Session) error {
-	path, err := store.Path(name)
-	if err != nil {
-		return err
-	}
-	if err := session.Validate(); err != nil {
-		return fmt.Errorf("save session %q: %w", name, err)
-	}
-	if err := store.ensureDirectories(); err != nil {
-		return err
-	}
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("save session %q: refusing to replace a symbolic link", name)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("save session %q: destination is not a regular file", name)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("save session %q: inspect destination: %w", name, err)
-	}
-
-	var encoded bytes.Buffer
-	encoder := json.NewEncoder(&encoded)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(session); err != nil {
-		return fmt.Errorf("save session %q: encode: %w", name, err)
-	}
-	if encoded.Len() > maxSessionFile {
-		return fmt.Errorf("save session %q: encoded session exceeds %d bytes", name, maxSessionFile)
-	}
-
-	temporary, err := os.CreateTemp(store.Dir, temporaryFilePattern)
-	if err != nil {
-		return fmt.Errorf("save session %q: create temporary file: %w", name, err)
-	}
-	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	closeWithError := func(operation string, operationErr error) error {
-		_ = temporary.Close()
-		return fmt.Errorf("save session %q: %s: %w", name, operation, operationErr)
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		return closeWithError("restrict temporary file", err)
-	}
-	if _, err := temporary.Write(encoded.Bytes()); err != nil {
-		return closeWithError("write temporary file", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		return closeWithError("sync temporary file", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("save session %q: close temporary file: %w", name, err)
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("save session %q: atomically replace destination: %w", name, err)
-	}
-	removeTemporary = false
-	if err := syncDirectory(store.Dir); err != nil {
-		return fmt.Errorf("save session %q: sync session directory: %w", name, err)
-	}
-	return nil
-}
-
-// Load reads a strict JSON session after verifying file and directory safety.
-func (store *Store) Load(name string) (*Session, error) {
-	path, err := store.Path(name)
-	if err != nil {
-		return nil, err
-	}
-	if err := store.checkDirectories(); err != nil {
-		return nil, err
-	}
-	file, err := openPrivateRegularFile(path, name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	limited := io.LimitReader(file, maxSessionFile+1)
-	data, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, fmt.Errorf("load session %q: read: %w", name, err)
-	}
-	if len(data) > maxSessionFile {
-		return nil, fmt.Errorf("load session %q: file exceeds %d bytes", name, maxSessionFile)
-	}
-	var result Session
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		return nil, fmt.Errorf("load session %q: decode: %w", name, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("load session %q: trailing JSON value", name)
-		}
-		return nil, fmt.Errorf("load session %q: decode trailing data: %w", name, err)
-	}
-	if err := result.Validate(); err != nil {
-		return nil, fmt.Errorf("load session %q: validate: %w", name, err)
-	}
-	return &result, nil
 }
 
 // Inspect loads a session and returns only its non-secret summary.
@@ -380,11 +305,41 @@ func (store *Store) Remove(name string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("remove session %q: path is not a regular file", name)
 	}
+	if err := store.requireExactSessionName(name); err != nil {
+		return err
+	}
+	var keyID string
+	if data, readErr := readPrivateSessionFile(path, name, maxEncryptedSessionFile); readErr == nil {
+		if envelope, envelopeErr := decodeEnvelope(data, name); envelopeErr == nil {
+			if key, keyErr := store.keyProvider().Get(envelope.KeyID); keyErr == nil {
+				if plaintext, openErr := openSession(name, envelope.KeyID, key, envelope.Ciphertext); openErr == nil {
+					keyID = envelope.KeyID
+					clear(plaintext)
+				}
+				clear(key)
+			}
+		}
+		clear(data)
+	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove session %q: %w", name, err)
 	}
-	if err := syncDirectory(store.Dir); err != nil {
-		return fmt.Errorf("remove session %q: sync session directory: %w", name, err)
+	if err := store.directorySync(store.Dir); err != nil {
+		primary := fmt.Errorf("remove session %q: sync session directory: %w", name, err)
+		if keyID != "" {
+			return errors.Join(primary, fmt.Errorf(
+				"remove session %q: key %q was retained because deletion durability was not confirmed; after verifying the file is absent, run `d365-expense session cleanup-key %s`",
+				name, keyID, keyID,
+			))
+		}
+		return primary
+	}
+	if keyID != "" {
+		// File deletion remains authoritative, but report partial key cleanup so
+		// users know that copied or backed-up ciphertext may remain decryptable.
+		if err := store.keyProvider().Delete(keyID); err != nil && !errors.Is(err, errEncryptionKeyNotFound) {
+			return fmt.Errorf("remove session %q: session file was removed but keyring entry %q could not be deleted: %w", name, keyID, err)
+		}
 	}
 	return nil
 }
@@ -477,8 +432,8 @@ func openPrivateRegularFile(path, name string) (*os.File, error) {
 	if !before.Mode().IsRegular() {
 		return nil, fmt.Errorf("load session %q: path is not a regular file", name)
 	}
-	if runtime.GOOS != "windows" && before.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("load session %q: permissions are too broad (%04o); require owner-only access", name, before.Mode().Perm())
+	if err := checkPrivateFileMode(path, before); err != nil {
+		return nil, fmt.Errorf("load session %q: %w", name, err)
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -493,11 +448,18 @@ func openPrivateRegularFile(path, name string) (*os.File, error) {
 		file.Close()
 		return nil, fmt.Errorf("load session %q: file changed while opening", name)
 	}
-	if runtime.GOOS != "windows" && after.Mode().Perm()&0o077 != 0 {
+	if err := checkPrivateFileMode(path, after); err != nil {
 		file.Close()
-		return nil, fmt.Errorf("load session %q: opened file permissions are too broad (%04o); require owner-only access", name, after.Mode().Perm())
+		return nil, fmt.Errorf("load session %q: opened file %w", name, err)
 	}
 	return file, nil
+}
+
+func checkPrivateFileMode(path string, info os.FileInfo) error {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("permissions for %q are too broad (%04o); require owner-only access", path, info.Mode().Perm())
+	}
+	return nil
 }
 
 func syncDirectory(path string) error {
@@ -527,4 +489,24 @@ func validateName(name string) error {
 		return fmt.Errorf("session name contains unsupported character %q", character)
 	}
 	return nil
+}
+
+func (store *Store) requireExactSessionName(name string) error {
+	entries, err := os.ReadDir(store.Dir)
+	if err != nil {
+		return fmt.Errorf("resolve session %q filename: %w", name, err)
+	}
+	target := name + sessionFileSuffix
+	for _, entry := range entries {
+		if entry.Name() == target {
+			return nil
+		}
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), target) {
+			actual := strings.TrimSuffix(entry.Name(), sessionFileSuffix)
+			return fmt.Errorf("session name casing mismatch: requested %q, stored as %q", name, actual)
+		}
+	}
+	return fmt.Errorf("session file for %q disappeared while resolving its exact name", name)
 }

@@ -248,11 +248,15 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 		}
 		submitted = true
 	} else {
-		if err := receiptClient.saveAndClose(ctx); err != nil {
+		saveBody, saveErr := receiptClient.saveAndClose(ctx)
+		if saveErr != nil {
 			client.syncReceiptSession(receiptClient)
-			return CreateReportWithReceiptsResult{}, err
+			return CreateReportWithReceiptsResult{}, saveErr
 		}
 		client.syncReceiptSession(receiptClient)
+		if err := client.restoreWorkspace(saveBody, "save and close response"); err != nil {
+			return CreateReportWithReceiptsResult{}, markOperationUncertain(err)
+		}
 		savedAndClosed = true
 	}
 

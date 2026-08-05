@@ -17,12 +17,16 @@ receipts, submit reports, or save them as Drafts.
 - Access to the Dynamics 365 Finance **Expense management** workspace.
 - Permission to create and submit expense reports.
 - Go 1.24 or newer.
+- An available operating system credential store for named sessions: macOS
+  Keychain, Windows Credential Manager, or Linux Secret Service.
 - Authentication from either:
   - a private browser HAR captured from the Expense workspace; or
   - a signed-in Microsoft Edge session available through local CDP.
 
-Receipts must be PNG files no larger than 1,024,000 bytes. HAR files and saved
-sessions contain credentials; keep them private and never commit them.
+Receipts must be PNG files no larger than 1,024,000 bytes. HAR files contain
+plaintext credentials. Saved sessions contain encrypted credentials whose keys
+are held by the operating system keyring; keep both private and never commit
+them.
 
 ## Install
 
@@ -168,6 +172,9 @@ d365-expense session show work
 d365-expense session remove work
 ```
 
+If a partial cleanup error reports an orphaned key ID, unlock the operating
+system keyring and run `d365-expense session cleanup-key <key-id>`.
+
 Session states:
 
 - **`ready`** — available for a command.
@@ -227,7 +234,8 @@ See [Troubleshooting](docs/troubleshooting.md) for detailed recovery guidance.
 
 ## Security
 
-- Treat HAR and session files like passwords.
+- Treat raw HAR files like passwords. Session files are encrypted but remain
+  sensitive operational state.
 - Keep CDP bound to loopback (`127.0.0.1`).
 - Use the dedicated Edge profile only for Dynamics expense work.
 - Never edit a session state back to `ready` manually.

@@ -16,13 +16,30 @@ func TestCanonicalHelpShowsStructuredCommands(t *testing.T) {
 	if code := runCanonical([]string{"--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
 	}
-	for _, want := range []string{"d365-expense", "create", "receipt attach", "session import", "session show", "har inspect", "har capture"} {
+	for _, want := range []string{"d365-expense", "create", "receipt attach", "session import", "session show", "session cleanup-key", "har inspect", "har capture"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("help missing %q:\n%s", want, stdout.String())
 		}
 	}
 	if strings.Contains(stdout.String(), "create-draft") || strings.Contains(stdout.String(), "msexpense") {
 		t.Fatalf("canonical help exposed legacy names:\n%s", stdout.String())
+	}
+}
+
+func TestCanonicalSessionCleanupKeyRoutesReportedID(t *testing.T) {
+	t.Parallel()
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.sessionCleanupKey = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runCanonicalWithRunners([]string{"session", "cleanup-key", "reported-key-id"}, &stdout, &stderr, runners); code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	if want := []string{"--id", "reported-key-id"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
 
