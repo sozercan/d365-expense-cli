@@ -20,4 +20,5 @@ Choose the guide that matches what you are trying to do.
 
 - [Dynamics protocol internals](internals/dynamics-protocol.md)
 - [Receipt protocol internals](internals/receipt-protocol.md)
+- [Expense line protocol internals](internals/expense-line-protocol.md)
 - [Contributing](../CONTRIBUTING.md)

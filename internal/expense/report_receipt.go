@@ -49,13 +49,17 @@ func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithRecei
 	if request.FinalAction == ReportFinalActionSubmit {
 		finalAction = "after all receipts succeed, submit using only the exact discovered SubmitButton"
 	}
+	actions := []string{
+		"open new expense report",
+		"set purpose and create Draft while leaving its details form open",
+	}
+	actions = append(actions, expenseLinePlanActions(request.Expenses)...)
 	return CreateReportWithReceiptsPlan{
 		Purpose:      request.Purpose,
+		Expenses:     len(request.Expenses),
 		Receipts:     receipts,
-		RequestCount: requestCount,
-		Actions: []string{
-			"open new expense report",
-			"set purpose and create Draft while leaving its details form open",
+		RequestCount: requestCount + expenseLinesRequestCount(request.Expenses),
+		Actions: append(actions,
 			"activate the dynamically discovered Receipts tab once",
 			"discover the tab response's New receipt control",
 			"attach every receipt sequentially in request order",
@@ -63,7 +67,7 @@ func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithRecei
 			"for each receipt, validate and upload one PNG",
 			"after each receipt, verify Draft status and the cumulative receipt count",
 			finalAction,
-		},
+		),
 	}, nil
 }
 
@@ -90,6 +94,7 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 	if err != nil {
 		return CreateReportWithReceiptsResult{}, err
 	}
+	sequenceHeadroom += expenseLinesSequenceHeadroom(request.Expenses)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -105,6 +110,13 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 	if request.FinalAction == ReportFinalActionSubmit {
 		if err := dynamics.ValidateSubmitButton(draft.submitButton, draft.detailsRootID); err != nil {
 			return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)
+		}
+	}
+	var expenses []ExpenseLineResult
+	if len(request.Expenses) != 0 {
+		expenses, err = client.addExpenseLines(ctx, draft, request.Expenses)
+		if err != nil {
+			return CreateReportWithReceiptsResult{}, err
 		}
 	}
 	createdReceiptModel, err := dynamics.DiscoverReceiptModel(draft.responseBody)
@@ -264,6 +276,7 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 		Purpose:            request.Purpose,
 		ReportNumber:       draft.reportNumber,
 		Status:             status,
+		Expenses:           expenses,
 		ReceiptCountBefore: beforeReceiptCount,
 		ReceiptCountAfter:  beforeReceiptCount + len(request.Receipts),
 		Receipts:           attachedReceipts,
@@ -283,6 +296,9 @@ func validateCreateReportWithReceiptsRequest(request CreateReportWithReceiptsReq
 		return errors.New("expense: at least one receipt is required")
 	}
 	if err := validateReportFinalAction(request.FinalAction); err != nil {
+		return err
+	}
+	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
 		return err
 	}
 	for index, receipt := range request.Receipts {

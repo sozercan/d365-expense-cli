@@ -7,6 +7,7 @@ receipts, submit reports, or save them as Drafts.
 
 - Create and submit a new expense report.
 - Save a new report as a Draft with `--draft`.
+- Add expense lines to a new Draft, including itemized hotel stays.
 - Attach up to 20 PNG receipts to a new report.
 - Preview a report with `--dry-run` before making changes.
 - Reuse a named authenticated Dynamics session.
@@ -132,6 +133,49 @@ d365-expense create \
   --receipt flight.png
 ```
 
+### Add expense lines
+
+Describe the lines in a JSON file and pass it with `--expenses`. Lines are
+added in file order before any receipts are attached:
+
+```json
+[
+  {
+    "category": "Hotel",
+    "date": "2026-10-10",
+    "amount": "300.00",
+    "merchant": "Example Hotel",
+    "notes": "Conference hotel",
+    "itemization": [
+      {"subcategory": "Daily Room Rate", "start_date": "2026-10-10", "daily_rate": "125.00", "days": 2},
+      {"subcategory": "Hotel Tax", "daily_rate": "25.00", "days": 2}
+    ]
+  },
+  {"category": "Airline Fees", "date": "2026-10-11", "amount": "35.00", "currency": "USD"}
+]
+```
+
+```bash
+d365-expense create \
+  --draft \
+  --session work \
+  --purpose "Customer visit" \
+  --expenses expenses.json \
+  --receipt folio.png
+```
+
+- `category`, `date` (`YYYY-MM-DD`), and `amount` are required. `currency`,
+  `merchant`, and `notes` are optional; omitted values keep the form defaults.
+- Category and subcategory names must match the names shown in Dynamics.
+- `itemization` is optional. Each row adds `days` daily charges of `daily_rate`
+  starting on `start_date`, which defaults to the expense date. The rows must
+  add up exactly to `amount`.
+- `--expenses` requires `--draft`. Review policy warnings, attach any
+  line-level receipts, and submit the report in Dynamics.
+
+Each field is verified against the value Dynamics reports before the line is
+saved. If anything differs, the command stops and leaves the report as a Draft.
+
 ### Use a HAR directly
 
 A named session is recommended for normal use, but a private HAR can be used
@@ -228,6 +272,7 @@ See [Troubleshooting](docs/troubleshooting.md) for detailed recovery guidance.
   Draft by report number.
 - The CLI does not approve, post, or recall reports.
 - Receipts must be PNG files and are attached at report level.
+- Expense lines are supported only on new Drafts created with `--draft`.
 - CDP acquisition currently targets Microsoft Edge.
 - Raw HAR capture requires owner-only file permissions and is not supported on
   Windows when those permissions cannot be enforced.
@@ -260,4 +305,5 @@ data.
 
 - [Dynamics protocol internals](docs/internals/dynamics-protocol.md)
 - [Receipt protocol internals](docs/internals/receipt-protocol.md)
+- [Expense line protocol internals](docs/internals/expense-line-protocol.md)
 - [Contributing](CONTRIBUTING.md)

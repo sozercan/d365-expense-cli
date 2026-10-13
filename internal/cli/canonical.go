@@ -14,6 +14,9 @@ import (
 
 var version = "dev"
 
+// expenseLineTimeout is the default time budget added per expense line.
+const expenseLineTimeout = 90 * time.Second
+
 type canonicalCLI struct {
 	ConfigDir string           `name:"config-dir" type:"path" env:"D365_EXPENSE_CONFIG_DIR" help:"Configuration directory."`
 	Timeout   time.Duration    `name:"timeout" default:"0s" help:"Overall operation timeout; zero uses the command default."`
@@ -45,6 +48,7 @@ type createCommand struct {
 	profileSource      `embed:""`
 	Draft              bool     `name:"draft" help:"Save and close as a Draft instead of submitting."`
 	Purpose            string   `name:"purpose" required:"" help:"Expense report purpose/title."`
+	Expenses           string   `name:"expenses" type:"existingfile" placeholder:"FILE" help:"JSON file of expense lines, optionally itemized, to add; requires --draft."`
 	Receipts           []string `name:"receipt" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in attachment order."`
 	ReceiptNote        string   `name:"receipt-note" help:"Notes applied to every receipt."`
 	ReceiptProtocolHAR string   `name:"receipt-protocol-har" type:"existingfile" hidden:""`
@@ -63,6 +67,9 @@ func (command *createCommand) Validate() error {
 	}
 	if command.ReceiptProtocolHAR != "" && len(command.Receipts) == 0 {
 		return errors.New("--receipt-protocol-har requires at least one --receipt")
+	}
+	if command.Expenses != "" && !command.Draft {
+		return errors.New("--expenses currently requires --draft; review and submit the report in Dynamics")
 	}
 	return nil
 }
@@ -224,14 +231,23 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	if !command.Draft {
 		args = append(args, "--submit")
 	}
+	// Every expense line adds several sequential round trips, so the default
+	// budget grows with the file; parse errors are reported by the runner.
+	var expenseBudget time.Duration
+	if command.Expenses != "" {
+		args = append(args, "--expenses", command.Expenses)
+		if lines, err := loadExpenseFile(command.Expenses); err == nil {
+			expenseBudget = time.Duration(len(lines)) * expenseLineTimeout
+		}
+	}
 	if len(command.Receipts) == 0 {
-		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second).String())
+		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second+expenseBudget).String())
 		if !command.DryRun {
 			args = append(args, "--execute")
 		}
 		return invokeLegacy(rt.runners.createReport, args, rt)
 	}
-	args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 120*time.Second).String())
+	args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 120*time.Second+expenseBudget).String())
 	for _, receipt := range command.Receipts {
 		args = append(args, "--file", receipt)
 	}

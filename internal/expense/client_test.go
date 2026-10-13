@@ -174,7 +174,7 @@ func TestCreateReportSaveDraftUsesResponseIDsAndOnlySavesAndCloses(t *testing.T)
 	if err != nil {
 		t.Fatalf("CreateReport() error = %v", err)
 	}
-	if want := (expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); report != want {
+	if want := (expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-0042", Status: "Draft", SavedAndClosed: true}); !reflect.DeepEqual(report, want) {
 		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
 	}
 	snapshot, err := client.SnapshotBootstrapProfile()
@@ -380,7 +380,7 @@ func TestCreateAndSubmitUsesExactDiscoveredSubmitButton(t *testing.T) {
 		t.Fatalf("CreateReport() error = %v", err)
 	}
 	want := expense.ReportResult{Purpose: "Conference travel", ReportNumber: "ER-SUBMIT", Status: "2", Submitted: true}
-	if report != want {
+	if !reflect.DeepEqual(report, want) {
 		t.Fatalf("CreateReport() = %#v, want %#v", report, want)
 	}
 	if requestNumber.Load() != 3 {

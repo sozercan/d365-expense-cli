@@ -84,7 +84,8 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	sessionName := flags.String("session", "", "named imported standalone session")
 	purpose := flags.String("purpose", "", "expense report title/purpose")
 	submit := flags.Bool("submit", false, "submit the newly created report instead of saving it as a Draft")
-	execute := flags.Bool("execute", false, "send the three allowlisted report-creation requests")
+	expensesPath := flags.String("expenses", "", "JSON file of expense lines to add before saving the Draft")
+	execute := flags.Bool("execute", false, "send the allowlisted report-creation requests")
 	timeout := flags.Duration("timeout", 45*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -105,6 +106,14 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "create-draft requires a positive --timeout")
 		return 2
 	}
+	var expenses []expense.ExpenseLineInput
+	if *expensesPath != "" {
+		var err error
+		if expenses, err = loadExpenseFile(*expensesPath); err != nil {
+			fmt.Fprintf(stderr, "create-draft: %v\n", err)
+			return 1
+		}
+	}
 	profile, err := loadBootstrapForRead(*harPath, *sessionName)
 	if err != nil {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
@@ -119,7 +128,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	if *submit {
 		finalAction = expense.ReportFinalActionSubmit
 	}
-	reportRequest := expense.CreateReportRequest{Purpose: *purpose, FinalAction: finalAction}
+	reportRequest := expense.CreateReportRequest{Purpose: *purpose, Expenses: expenses, FinalAction: finalAction}
 	plan, err := client.PlanCreateReport(reportRequest)
 	if err != nil {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
@@ -129,6 +138,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	if !*execute {
 		fmt.Fprintln(stdout, "dry run: no network requests sent; imported session state was not modified")
 		fmt.Fprintf(stdout, "purpose: %q\n", plan.Purpose)
+		printExpensePlan(stdout, expenses)
 		fmt.Fprintf(stdout, "requests: %d\n", plan.RequestCount)
 		for _, action := range plan.Actions {
 			fmt.Fprintf(stdout, "- %s\n", action)
@@ -169,6 +179,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "created draft %s: purpose=%q status=%s saved-and-closed=%t\n",
 			report.ReportNumber, report.Purpose, report.Status, report.SavedAndClosed)
 	}
+	printExpenseResults(stdout, report.Expenses)
 	if checkpointErr != nil {
 		fmt.Fprintf(stderr, "create-draft: report operation succeeded, but session checkpoint failed; do not retry this expense operation: %v\n", checkpointErr)
 		return 1

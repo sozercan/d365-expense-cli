@@ -218,18 +218,20 @@ func (client *Client) PlanCreateReport(request CreateReportRequest) (CreateRepor
 	if err := validateReportFinalAction(request.FinalAction); err != nil {
 		return CreateReportPlan{}, err
 	}
+	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
+		return CreateReportPlan{}, err
+	}
 	finalAction := "save and close draft"
 	if request.FinalAction == ReportFinalActionSubmit {
 		finalAction = "submit the new report using its exact discovered SubmitButton"
 	}
+	actions := []string{"open new expense report", "set purpose and create draft"}
+	actions = append(actions, expenseLinePlanActions(request.Expenses)...)
 	return CreateReportPlan{
 		Purpose:      request.Purpose,
-		RequestCount: 3,
-		Actions: []string{
-			"open new expense report",
-			"set purpose and create draft",
-			finalAction,
-		},
+		Expenses:     len(request.Expenses),
+		RequestCount: 3 + expenseLinesRequestCount(request.Expenses),
+		Actions:      append(actions, finalAction),
 	}, nil
 }
 
@@ -244,16 +246,26 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 	if err := validateReportFinalAction(request.FinalAction); err != nil {
 		return ReportResult{}, err
 	}
+	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
+		return ReportResult{}, err
+	}
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.nextClientSequence > math.MaxInt64-3 {
+	if client.nextClientSequence > math.MaxInt64-3-expenseLinesSequenceHeadroom(request.Expenses) {
 		return ReportResult{}, errors.New("expense: client sequence lacks headroom for report creation")
 	}
 
 	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
 		return ReportResult{}, err
+	}
+	var expenses []ExpenseLineResult
+	if len(request.Expenses) != 0 {
+		expenses, err = client.addExpenseLines(ctx, draft, request.Expenses)
+		if err != nil {
+			return ReportResult{}, markOperationUncertain(err)
+		}
 	}
 
 	if request.FinalAction == ReportFinalActionSubmit {
@@ -285,6 +297,7 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 		Purpose:        request.Purpose,
 		ReportNumber:   draft.reportNumber,
 		Status:         draft.status,
+		Expenses:       expenses,
 		SavedAndClosed: true,
 	}, nil
 }

@@ -48,6 +48,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 	flags.Var(&filePaths, "file", "private PNG receipt file; repeat for every receipt")
 	notes := flags.String("notes", "", "optional notes applied to every receipt")
 	submit := flags.Bool("submit", false, "submit the newly created report after attaching every receipt")
+	expensesPath := flags.String("expenses", "", "JSON file of expense lines to add before attaching receipts")
 	execute := flags.Bool("execute", false, "create the report and perform its requested final action")
 	timeout := flags.Duration("timeout", 120*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
@@ -95,6 +96,13 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
 		return 1
 	}
+	var expenses []expense.ExpenseLineInput
+	if *expensesPath != "" {
+		if expenses, err = loadExpenseFile(*expensesPath); err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
+			return 1
+		}
+	}
 	profile, err := loadBootstrapForRead(*harPath, *sessionName)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", commandName, err)
@@ -111,6 +119,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 	}
 	request := expense.CreateReportWithReceiptsRequest{
 		Purpose:        *purpose,
+		Expenses:       expenses,
 		Receipts:       receipts,
 		UploadContract: contract,
 		FinalAction:    finalAction,
@@ -124,6 +133,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 	if !*execute {
 		fmt.Fprintln(stdout, "dry run: no network requests sent; receipts were read only for local validation and session state was not modified")
 		fmt.Fprintf(stdout, "purpose: %q\n", plan.Purpose)
+		printExpensePlan(stdout, expenses)
 		fmt.Fprintf(stdout, "receipts: %d\n", len(plan.Receipts))
 		for index, planned := range plan.Receipts {
 			fmt.Fprintf(stdout, "- receipt %d: %q (%s, %d bytes)\n", index+1, planned.Receipt.Filename, planned.Receipt.MediaType, planned.Receipt.Size)
@@ -170,6 +180,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 			result.ReportNumber, result.Purpose, result.Status, len(result.Receipts),
 			result.ReceiptCountBefore, result.ReceiptCountAfter, result.SavedAndClosed)
 	}
+	printExpenseResults(stdout, result.Expenses)
 	for index, attached := range result.Receipts {
 		fmt.Fprintf(stdout, "- attached %d: %q (%d bytes), cumulative-receipt-count=%d\n",
 			index+1, attached.Attached.Filename, attached.Attached.Size, attached.ReceiptCountAfter)

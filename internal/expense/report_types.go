@@ -17,6 +17,7 @@ const (
 // final action.
 type CreateReportRequest struct {
 	Purpose     string
+	Expenses    []ExpenseLineInput
 	FinalAction ReportFinalAction
 }
 
@@ -24,6 +25,7 @@ type CreateReportRequest struct {
 // operation.
 type CreateReportPlan struct {
 	Purpose      string
+	Expenses     int
 	RequestCount int
 	Actions      []string
 }
@@ -34,6 +36,7 @@ type ReportResult struct {
 	Purpose        string
 	ReportNumber   string
 	Status         string
+	Expenses       []ExpenseLineResult
 	SavedAndClosed bool
 	Submitted      bool
 }

@@ -132,6 +132,7 @@ type CreateReportReceiptResult struct {
 // one or more PNG receipts and an explicit final action.
 type CreateReportWithReceiptsRequest struct {
 	Purpose        string
+	Expenses       []ExpenseLineInput
 	Receipts       []CreateReportReceiptInput
 	UploadContract ReceiptUploadContract
 	FinalAction    ReportFinalAction
@@ -141,6 +142,7 @@ type CreateReportWithReceiptsRequest struct {
 // report creation and ordered multi-receipt mutation.
 type CreateReportWithReceiptsPlan struct {
 	Purpose      string
+	Expenses     int
 	Receipts     []CreateReportReceiptSummary
 	RequestCount int
 	Actions      []string
@@ -152,6 +154,7 @@ type CreateReportWithReceiptsResult struct {
 	Purpose            string
 	ReportNumber       string
 	Status             string
+	Expenses           []ExpenseLineResult
 	ReceiptCountBefore int
 	ReceiptCountAfter  int
 	Receipts           []CreateReportReceiptResult
