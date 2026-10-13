@@ -64,15 +64,25 @@ type Profile struct {
 type BootstrapProfile struct {
 	Session   SessionProfile
 	NewReport CommandTarget
-	// ReportsGrid is the workspace's expense-report grid. It is optional
-	// because it is only needed to select an existing report.
+	// ReportsGrid and ReportLink are the workspace's expense-report grid and
+	// its report-number hyperlink column. They are optional because they are
+	// only needed to select or open an existing report.
 	ReportsGrid CommandTarget
+	ReportLink  CommandTarget
 }
 
 const (
 	reportsGridCommand = "ChangeSelectedIndex"
 	reportsGridControl = "ReportsTabPageGrid"
+	reportLinkCommand  = "ExecuteHyperlink"
+	reportLinkControl  = "ExpenseReportNumber"
 )
+
+// ReportLinkTarget returns the allowlisted report-number hyperlink target for
+// a workspace root and column control ID.
+func ReportLinkTarget(rootID, linkID string) CommandTarget {
+	return CommandTarget{CommandName: reportLinkCommand, RootID: rootID, TargetID: linkID, ControlName: reportLinkControl}
+}
 
 // ReportsGridTarget returns the allowlisted reports-grid target for a
 // workspace root and grid control ID.
@@ -177,11 +187,12 @@ func ParseBootstrap(r io.Reader) (*BootstrapProfile, error) {
 // control target. This is used by trusted local CDP acquisition when the
 // workspace model is already rendered but not repeated in captured responses.
 func ParseBootstrapWithNewReport(r io.Reader, newReport CommandTarget) (*BootstrapProfile, error) {
-	profile, err := parseBootstrapSessionHAR(r)
+	profile, selected, err := parseBootstrapSessionHAR(r)
 	if err != nil {
 		return nil, err
 	}
 	profile.NewReport = newReport
+	profile.ReportsGrid, profile.ReportLink = extractWorkspaceReportTargets(selected, newReport.RootID)
 	if err := profile.Validate(); err != nil {
 		return nil, err
 	}
@@ -232,6 +243,14 @@ func (p *BootstrapProfile) Validate() error {
 		}
 		if p.ReportsGrid != ReportsGridTarget(p.NewReport.RootID, p.ReportsGrid.TargetID) {
 			return errors.New("capture bootstrap reports-grid target is not allowlisted")
+		}
+	}
+	if p.ReportLink != (CommandTarget{}) {
+		if err := validateTarget("report-link", p.ReportLink); err != nil {
+			return err
+		}
+		if p.ReportLink != ReportLinkTarget(p.NewReport.RootID, p.ReportLink.TargetID) {
+			return errors.New("capture bootstrap report-link target is not allowlisted")
 		}
 	}
 	return nil

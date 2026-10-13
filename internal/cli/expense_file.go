@@ -51,29 +51,65 @@ func (text *decimalText) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// loadExpenseFile reads a JSON array of expense lines. Semantic validation is
-// left to the expense package so dry runs and execution share one check.
-func loadExpenseFile(path string) ([]expense.ExpenseLineInput, error) {
+// loadItemizationFile reads a JSON array of itemization rows.
+func loadItemizationFile(path string) ([]expense.ItemizationInput, error) {
+	data, err := readExpenseJSON(path)
+	if err != nil {
+		return nil, err
+	}
+	var items []expenseFileItem
+	if err := decodeStrictJSON(data, &items); err != nil {
+		return nil, fmt.Errorf("parse itemization file: %w", err)
+	}
+	if len(items) == 0 {
+		return nil, errors.New("itemization file contains no rows")
+	}
+	rows := make([]expense.ItemizationInput, len(items))
+	for index, item := range items {
+		rows[index] = expense.ItemizationInput{Subcategory: item.Subcategory, StartDate: item.StartDate, DailyRate: string(item.DailyRate), Days: item.Days}
+	}
+	return rows, nil
+}
+
+func readExpenseJSON(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open expenses file: %w", err)
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, maxExpenseFileSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("read expenses file: %w", err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	if len(data) > maxExpenseFileSize {
-		return nil, errors.New("expenses file exceeds 1 MiB")
+		return nil, fmt.Errorf("%s exceeds 1 MiB", path)
 	}
+	return data, nil
+}
+
+// decodeStrictJSON decodes exactly one JSON value with no unknown fields.
+func decodeStrictJSON(data []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var lines []expenseFileLine
-	if err := decoder.Decode(&lines); err != nil {
-		return nil, fmt.Errorf("parse expenses file: %w", err)
+	if err := decoder.Decode(value); err != nil {
+		return err
 	}
 	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
-		return nil, errors.New("parse expenses file: trailing data after the JSON array")
+		return errors.New("trailing data after the JSON value")
+	}
+	return nil
+}
+
+// loadExpenseFile reads a JSON array of expense lines. Semantic validation is
+// left to the expense package so dry runs and execution share one check.
+func loadExpenseFile(path string) ([]expense.ExpenseLineInput, error) {
+	data, err := readExpenseJSON(path)
+	if err != nil {
+		return nil, err
+	}
+	var lines []expenseFileLine
+	if err := decodeStrictJSON(data, &lines); err != nil {
+		return nil, fmt.Errorf("parse expenses file: %w", err)
 	}
 	if len(lines) == 0 {
 		return nil, errors.New("expenses file contains no expense lines")

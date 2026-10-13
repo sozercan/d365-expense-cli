@@ -1,4 +1,4 @@
-# Observed expense line and Draft deletion protocol
+# Observed expense line and existing report protocol
 
 Captured on October 13, 2026 by adding a Hotel line to a new Draft, itemizing
 it into a room rate and hotel tax, and saving the report as a Draft. The
@@ -41,9 +41,13 @@ changed field, so the CLI merges updates before checking `CostType_field`,
 `TransDate_field`, `AmountCurr_field`, `ExchangeCode_field`,
 `MerchantId_field`, and `AdditionalInformation_field`.
 
-The save response must delete the dialog view model and insert exactly one new
-details-form `TrvExpTrans_ds` record with a non-zero `recId_internal` and the
-requested date and category.
+Every save and itemization close reloads the whole details-form
+`TrvExpTrans_ds` list: a `ClearCache` splice followed by inserts of every
+row's `MasterTrackingId`, with row fields in separate updates. The create and
+open responses carry the initial list as `Items`. `recId_internal` values in a
+reloaded list follow row position rather than the record, so the CLI compares
+lists by content (category and date). A save must add exactly one line with
+the requested category and date.
 
 ## Itemize a line
 
@@ -76,9 +80,9 @@ For each row:
    `ExpenseItemizationTransTmp_Quantity` (days).
 
 `ToBeItemizedAmount` must be zero before the CLI clicks `CloseButton`. The
-close response must delete the dialog and insert one details-form
-`TrvExpTrans_ds` line per day for each row; for example, two days of room rate
-and two days of tax produce four itemized lines.
+close response must delete the dialog, and its reloaded list must add exactly
+one line per day for each row, dated from the row's start date; for example,
+two days of room rate and two days of tax produce four itemized lines.
 
 ## Safety
 
@@ -88,6 +92,27 @@ workflow, posting, approval, and recall command names. Any verification
 failure stops the workflow: lines already saved stay on the report, later lines
 are not added, the report is not saved and closed by the CLI, and a named
 session becomes `uncertain`. The report remains a Draft.
+
+## Open an existing Draft
+
+`session import` records the workspace's `ReportsTabPageGrid` and its
+`ExpenseReportNumber` hyperlink column as optional targets. They come from the
+page's initial `GetFormInteraction` response; the browser sends that request
+before `Language` and session headers are set, so the importer links it to the
+session by sequence continuity.
+
+1. `ExecuteShortcuts("Refresh")` on the workspace root lists the reports.
+2. Unless the report is already active, `ChangeSelectedIndex` on the grid with
+   `[target, 0, active, false, true]` activates its row.
+3. `ExecuteHyperlink` on `ExpenseReportNumber` opens the active row's
+   `ExpenseReportDetails_form`, whose `TrvExpTrans_ds` `Items` list the lines in
+   display order with `ActiveMasterTrackingId` for the active line.
+
+To act on another line, `ChangeSelectedIndex` with mark mode 0 on the details
+form's `MainGrid` makes it active; the card's Actions menu then targets it.
+`report submit` clicks the validated `SubmitButton` from the opened form,
+requires the workspace to be restored, and refreshes the list to confirm the
+report's `ApprovalStatus_field` is no longer `1`.
 
 ## Delete a Draft
 
@@ -115,5 +140,6 @@ optional `reportsGrid` target. `report delete` sends one message per stage:
 5. `Refresh` again; the report number must no longer be listed.
 
 Dynamics deletes every marked row, which is why the CLI refuses to continue
-when any other row is marked. Deleting a report with lines can take close to a
+when any other row is marked. Deleting a report keeps its lines as unattached
+expenses, and creating a report attaches all unattached expenses to it. Deleting a report with lines can take close to a
 minute, so the default timeout is three minutes.

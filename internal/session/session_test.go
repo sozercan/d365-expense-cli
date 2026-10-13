@@ -68,6 +68,7 @@ func TestFromBootstrapRoundTripAndDefensiveCopies(t *testing.T) {
 func TestFromBootstrapRoundTripsReportsGrid(t *testing.T) {
 	profile := validBootstrapProfile()
 	profile.ReportsGrid = capture.ReportsGridTarget("workspace-root", "reports-grid")
+	profile.ReportLink = capture.ReportLinkTarget("workspace-root", "report-link")
 	imported, err := FromBootstrap(profile)
 	if err != nil {
 		t.Fatalf("FromBootstrap() error = %v", err)
@@ -76,8 +77,8 @@ func TestFromBootstrapRoundTripsReportsGrid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToBootstrap() error = %v", err)
 	}
-	if roundTrip.ReportsGrid != profile.ReportsGrid {
-		t.Fatalf("ReportsGrid = %#v, want %#v", roundTrip.ReportsGrid, profile.ReportsGrid)
+	if roundTrip.ReportsGrid != profile.ReportsGrid || roundTrip.ReportLink != profile.ReportLink {
+		t.Fatalf("report targets = %#v, %#v; want %#v, %#v", roundTrip.ReportsGrid, roundTrip.ReportLink, profile.ReportsGrid, profile.ReportLink)
 	}
 	imported.ReportsGrid.RootID = "other-root"
 	if err := imported.Validate(); err == nil {

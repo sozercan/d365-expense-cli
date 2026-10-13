@@ -167,13 +167,16 @@ func expenseLineSteps(overrides map[int]func([]json.RawMessage) []json.RawMessag
 			})}
 		},
 		func(dynamics.Envelope) []json.RawMessage {
-			return []json.RawMessage{viewModelInteraction(map[string]any{
+			return []json.RawMessage{rootedViewModel(details, map[string]any{
 				"Id": details, "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
-				"ChildModelCollections": map[string]any{"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{
-					"Id": "report", "Properties": map[string]any{
-						"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-0042", "expenseReportStatus_dataMethod": "Draft",
-					},
-				}}}}},
+				"ChildModelCollections": map[string]any{
+					"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{
+						"Id": "report", "Properties": map[string]any{
+							"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-0042", "expenseReportStatus_dataMethod": "Draft",
+						},
+					}}}},
+					dynamics.DataSourceExpenseLines: map[string]any{"Name": dynamics.DataSourceExpenseLines, "IsLastPage": false, "Items": []any{}},
+				},
 				"ChildViewModels": []any{
 					control("save-and-close", dynamics.ControlSaveAndClose),
 					control("new-expense", dynamics.ControlNewExpenseButton),
@@ -181,8 +184,14 @@ func expenseLineSteps(overrides map[int]func([]json.RawMessage) []json.RawMessag
 			})}
 		},
 	}
-	steps = append(steps, expenseDialogSteps("expense-dialog", "Hotel", "2026-10-10", "300.0000000000000000", "Test Hotel", "5001",
-		controlUpdate(details, control("card-menu", dynamics.ControlExpenseCardMenu)))...)
+	hotel := lineRow("1", "Hotel", "2026-10-10")
+	children := []map[string]any{
+		lineRow("2", "Daily Room Rate", "2026-10-10"), lineRow("3", "Daily Room Rate", "2026-10-11"),
+		lineRow("4", "Hotel Tax", "2026-10-10"), lineRow("5", "Hotel Tax", "2026-10-11"),
+	}
+	itemized := append([]map[string]any{hotel}, children...)
+	steps = append(steps, expenseDialogSteps("expense-dialog", "Hotel", "2026-10-10", "300.0000000000000000", "Test Hotel",
+		[]map[string]any{hotel}, controlUpdate(details, control("card-menu", dynamics.ControlExpenseCardMenu)))...)
 	steps = append(steps,
 		func(dynamics.Envelope) []json.RawMessage {
 			button := control("itemize", dynamics.ControlItemizeExpenseButton)
@@ -223,16 +232,11 @@ func expenseLineSteps(overrides map[int]func([]json.RawMessage) []json.RawMessag
 		rowUpdateStep("21", map[string]any{"DailyRate_field": "25.0000000000000000"}),
 		rowUpdateStep("21", map[string]any{"Quantity_field": "2"}, amountControl("remaining", dynamics.ControlItemizationRemaining, "0.0000000000000000")),
 		func(dynamics.Envelope) []json.RawMessage {
-			return []json.RawMessage{
-				deleteViewModel("itemize-form"),
-				recordUpdate(details, savedLine("5001", "Hotel", "2026-10-10")),
-				recordInsert(details, dynamics.DataSourceExpenseLines,
-					savedLine("5002", "Daily Room Rate", "2026-10-10"), savedLine("5003", "Daily Room Rate", "2026-10-11"),
-					savedLine("5004", "Hotel Tax", "2026-10-10"), savedLine("5005", "Hotel Tax", "2026-10-11")),
-			}
+			return append([]json.RawMessage{deleteViewModel("itemize-form")}, fullLineList(itemized...)...)
 		},
 	)
-	steps = append(steps, expenseDialogSteps("expense-dialog-2", "Airline Fees", "2026-10-11", "35.0000000000000000", "", "5006")...)
+	steps = append(steps, expenseDialogSteps("expense-dialog-2", "Airline Fees", "2026-10-11", "35.0000000000000000", "",
+		append(itemized, lineRow("6", "Airline Fees", "2026-10-11")))...)
 	steps = append(steps, func(dynamics.Envelope) []json.RawMessage {
 		return []json.RawMessage{viewModelInteraction(map[string]any{
 			"Id": "workspace", "Name": dynamics.FormExpenseWorkspace, "TypeName": "Form",
@@ -246,7 +250,7 @@ func expenseLineSteps(overrides map[int]func([]json.RawMessage) []json.RawMessag
 	return steps
 }
 
-func expenseDialogSteps(dialog, category, date, amount, merchant, recID string, saveExtra ...json.RawMessage) []scriptedStep {
+func expenseDialogSteps(dialog, category, date, amount, merchant string, listAfterSave []map[string]any, saveExtra ...json.RawMessage) []scriptedStep {
 	steps := []scriptedStep{
 		func(dynamics.Envelope) []json.RawMessage {
 			return []json.RawMessage{
@@ -274,10 +278,8 @@ func expenseDialogSteps(dialog, category, date, amount, merchant, recID string, 
 		steps = append(steps, fieldStep(dialog, "MerchantId_field", merchant))
 	}
 	return append(steps, func(dynamics.Envelope) []json.RawMessage {
-		return append([]json.RawMessage{
-			deleteViewModel(dialog),
-			recordInsert("details", dynamics.DataSourceExpenseLines, savedLine(recID, category, date)),
-		}, saveExtra...)
+		interactions := append([]json.RawMessage{deleteViewModel(dialog)}, fullLineList(listAfterSave...)...)
+		return append(interactions, saveExtra...)
 	})
 }
 
@@ -316,11 +318,27 @@ func itemizationRow(trackingID, recID, startDate, rate, quantity string) map[str
 	}
 }
 
-func savedLine(recID, category, date string) map[string]any {
+func lineRow(tracking, category, date string) map[string]any {
 	return map[string]any{
-		"dataSourceName_internal": dynamics.DataSourceExpenseLines, "recId_internal": recID,
+		"dataSourceName_internal": dynamics.DataSourceExpenseLines, "MasterTrackingId": tracking, "recId_internal": "50" + tracking,
 		"TransDate_field": date, "categoryOrSubCategoryName_dataMethod": category,
 	}
+}
+
+// fullLineList reloads the details lines as Dynamics does after a save: a
+// ClearCache splice of tracking IDs followed by one update per row.
+func fullLineList(rows ...map[string]any) []json.RawMessage {
+	inserts := make([]any, len(rows))
+	updates := make([]json.RawMessage, len(rows))
+	for index, row := range rows {
+		inserts[index] = map[string]any{"Item": map[string]any{"Properties": map[string]any{"MasterTrackingId": row["MasterTrackingId"]}}}
+		updates[index] = recordUpdate("details", row)
+	}
+	collection := mustRaw(map[string]any{"$type": "UpdateModelCollectionInteraction", "RootId": "details", "Descriptor": map[string]any{
+		"Name": dynamics.DataSourceExpenseLines, "IsLastPage": true,
+		"SpliceOperations": []any{map[string]any{"ClearCache": true, "Insert": []any{}}, map[string]any{"Index": 0, "Delete": 0, "Insert": inserts}},
+	}})
+	return append([]json.RawMessage{collection}, updates...)
 }
 
 func control(id, name string) map[string]any {

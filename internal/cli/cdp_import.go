@@ -116,8 +116,15 @@ func runSessionImportCDP(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "session import-cdp: validate captured state: %v\n", err)
 		return 1
 	}
-	if pageState.ReportsGridID != "" {
+	// Captured responses identify both report controls when the import
+	// reloads the workspace; the rendered page can only confirm the grid.
+	if profile.ReportsGrid == (capture.CommandTarget{}) && pageState.ReportsGridID != "" {
 		profile.ReportsGrid = capture.ReportsGridTarget(pageState.WorkspaceRootID, pageState.ReportsGridID)
+	}
+	if profile.ReportLink == (capture.CommandTarget{}) && pageState.ReportLinkID != "" {
+		profile.ReportLink = capture.ReportLinkTarget(pageState.WorkspaceRootID, pageState.ReportLinkID)
+	}
+	if profile.ReportsGrid != (capture.CommandTarget{}) || profile.ReportLink != (capture.CommandTarget{}) {
 		if err := profile.Validate(); err != nil {
 			fmt.Fprintf(stderr, "session import-cdp: validate captured state: %v\n", err)
 			return 1

@@ -2,6 +2,7 @@ package dynamics_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/sozercan/d365-expense-cli/internal/dynamics"
@@ -106,5 +107,34 @@ func TestValidateItemizeButtonRequiresCapturedMenuItem(t *testing.T) {
 	node := dynamics.ModelNode{ID: "410_0", Name: dynamics.ControlItemizeExpenseButton, RootID: "165_0"}
 	if err := dynamics.ValidateItemizeButton(node, "165_0"); err == nil {
 		t.Fatal("ValidateItemizeButton() accepted a node without menu-item metadata")
+	}
+}
+
+func TestDiscoverFullListReadsItemsAndClearCacheReloads(t *testing.T) {
+	for name, test := range map[string]struct {
+		body string
+		want []string
+		ok   bool
+	}{
+		"initial items": {`{"Messages":[{"Interactions":[{"RootId":"167_0","Descriptor":{"Name":"TrvExpTrans_ds","IsLastPage":true,
+			"Items":[{"Item":{"Properties":{"MasterTrackingId":"160"}}},{"Item":{"Properties":{"MasterTrackingId":"162"}}}]}}]}]}`, []string{"160", "162"}, true},
+		"empty new report": {`{"Messages":[{"Interactions":[{"RootId":"167_0","Descriptor":{"Name":"TrvExpTrans_ds","IsLastPage":false,"Items":[]}}]}]}`, []string{}, true},
+		"clear cache reload": {`{"Messages":[{"Interactions":[{"RootId":"167_0","Descriptor":{"Name":"TrvExpTrans_ds","IsLastPage":true,"SpliceOperations":[
+			{"ClearCache":true,"Insert":[]},{"Index":0,"Delete":5,"Insert":[{"Item":{"Properties":{"MasterTrackingId":"1058"}}},{"Item":{"Properties":{"MasterTrackingId":"1059"}}}]}]}}]}]}`, []string{"1058", "1059"}, true},
+		"incremental insert": {`{"Messages":[{"Interactions":[{"RootId":"167_0","Descriptor":{"Name":"TrvExpTrans_ds","IsLastPage":true,"SpliceOperations":[
+			{"Index":3,"Delete":0,"Insert":[{"Item":{"Properties":{"MasterTrackingId":"9"}}}]}]}}]}]}`, nil, false},
+		"partial page": {`{"Messages":[{"Interactions":[{"RootId":"167_0","Descriptor":{"Name":"TrvExpTrans_ds","IsLastPage":false,
+			"Items":[{"Item":{"Properties":{"MasterTrackingId":"160"}}}]}}]}]}`, []string{"160"}, false},
+		"other root": {`{"Messages":[{"Interactions":[{"RootId":"3_0","Descriptor":{"Name":"TrvExpTrans_ds","IsLastPage":true,"Items":[]}}]}]}`, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok, err := dynamics.DiscoverFullList([]byte(test.body), dynamics.DataSourceExpenseLines, "167_0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != test.ok || (test.ok && !reflect.DeepEqual(got, test.want)) {
+				t.Fatalf("DiscoverFullList() = %v, %t; want %v, %t", got, ok, test.want, test.ok)
+			}
+		})
 	}
 }

@@ -57,6 +57,7 @@ const (
 // current stage.
 type ExpenseLineCommandTargets struct {
 	DetailsRootID      string
+	LinesGridID        string
 	NewExpenseButtonID string
 	CardMenuID         string
 	ItemizeButtonID    string
@@ -131,6 +132,13 @@ func ValidateExpenseLineCommands(envelope Envelope, targets ExpenseLineCommandTa
 	}
 	switch len(envelope.Messages) {
 	case 1:
+		if names, err := topLevelStringFields(envelope.Messages[0].Interactions[0], "CommandName"); err == nil &&
+			len(envelope.Messages[0].Interactions) == 1 && len(names) == 1 && names[0] == CommandChangeSelectedIndex {
+			if targets.DetailsRootID == "" || targets.LinesGridID == "" {
+				return unsafe(0, 0, names[0], "line selection targets are incomplete")
+			}
+			return validateChangeSelectedIndex(envelope.Messages[0], targets.DetailsRootID, targets.LinesGridID, MarkModeActivate)
+		}
 		commands, err := envelope.Messages[0].CommandInteractions()
 		if err != nil {
 			return unsafe(0, -1, "", err.Error())
@@ -371,4 +379,74 @@ func decodeResponseValue(data []byte) (any, error) {
 // TrimmedEqualFold compares server-normalized text case-insensitively.
 func TrimmedEqualFold(left, right string) bool {
 	return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
+}
+
+// DiscoverFullList returns the MasterTrackingIds of a data source's rows in
+// display order when a response loads or reloads the whole collection in
+// rootID: an initial Items list, or a ClearCache splice followed by inserts.
+// It reports false when the response carries no such list or only one page.
+func DiscoverFullList(data []byte, dataSource, rootID string) ([]string, bool, error) {
+	value, err := decodeResponseValue(data)
+	if err != nil {
+		return nil, false, fmt.Errorf("discover %s list: %w", dataSource, err)
+	}
+	var list []string
+	found, partial := false, false
+	trackingIDs := func(items []any) []string {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			wrapper, _ := item.(map[string]any)
+			record := itemRecord(wrapper)
+			properties, _ := record["Properties"].(map[string]any)
+			ids = append(ids, stringValue(properties["MasterTrackingId"]))
+		}
+		return ids
+	}
+	var walk func(any, string)
+	walk = func(value any, currentRoot string) {
+		switch typed := value.(type) {
+		case map[string]any:
+			if root := stringValue(typed["RootId"]); root != "" {
+				currentRoot = root
+			}
+			if currentRoot == rootID && stringValue(typed["Name"]) == dataSource {
+				var ids []string
+				loaded := false
+				if items, ok := typed["Items"].([]any); ok {
+					ids, loaded = trackingIDs(items), true
+				} else if operations, ok := typed["SpliceOperations"].([]any); ok {
+					for _, raw := range operations {
+						operation, _ := raw.(map[string]any)
+						if clear, _ := operation["ClearCache"].(bool); clear {
+							ids, loaded = []string{}, true
+							continue
+						}
+						if loaded {
+							inserts, _ := operation["Insert"].([]any)
+							ids = append(ids, trackingIDs(inserts)...)
+						}
+					}
+				}
+				if loaded {
+					lastPage, _ := typed["IsLastPage"].(bool)
+					partial = len(ids) != 0 && !lastPage
+					list, found = ids, true
+				}
+			}
+			for _, child := range typed {
+				walk(child, currentRoot)
+			}
+		case []any:
+			for _, child := range typed {
+				walk(child, currentRoot)
+			}
+		}
+	}
+	walk(value, "")
+	for _, id := range list {
+		if id == "" {
+			return nil, false, fmt.Errorf("discover %s list: row without MasterTrackingId", dataSource)
+		}
+	}
+	return list, found && !partial, nil
 }

@@ -73,10 +73,10 @@ func (client *Client) DeleteDraftReport(ctx context.Context, request DeleteRepor
 	if client.nextClientSequence > math.MaxInt64-deleteReportRequestCount {
 		return DeleteReportResult{}, errors.New("expense: client sequence lacks headroom for report deletion")
 	}
-	targets := dynamics.DeleteReportCommandTargets{WorkspaceRootID: client.workspaceRootID, ReportsGridID: client.reportsGridID}
-	send := func(message dynamics.Message, targets dynamics.DeleteReportCommandTargets) ([]byte, error) {
+	targets := dynamics.ReportCommandTargets{WorkspaceRootID: client.workspaceRootID, ReportsGridID: client.reportsGridID, MarkMode: dynamics.MarkModeMark}
+	send := func(message dynamics.Message, targets dynamics.ReportCommandTargets) ([]byte, error) {
 		return client.sendValidated(ctx, []dynamics.Message{message}, func(envelope dynamics.Envelope) error {
-			return dynamics.ValidateDeleteReportCommands(envelope, targets)
+			return dynamics.ValidateReportCommands(envelope, targets)
 		})
 	}
 
@@ -108,7 +108,7 @@ func (client *Client) DeleteDraftReport(ctx context.Context, request DeleteRepor
 		return DeleteReportResult{}, errors.New("expense: reports Delete button not found in the workspace")
 	}
 
-	selectRow, err := dynamics.BuildSelectReportRowMessage(client.nextClientSequence, client.workspaceRootID, client.reportsGridID, trackingID, pivot)
+	selectRow, err := dynamics.BuildChangeSelectedIndexMessage(client.nextClientSequence, client.workspaceRootID, client.reportsGridID, trackingID, dynamics.MarkModeMark, pivot)
 	if err != nil {
 		return DeleteReportResult{}, fmt.Errorf("expense: %w", err)
 	}
@@ -160,7 +160,7 @@ func (client *Client) DeleteDraftReport(ctx context.Context, request DeleteRepor
 			err = markOperationUncertain(err)
 		}
 	}()
-	body, err = send(dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, confirm.ID, yes.ID), dynamics.DeleteReportCommandTargets{
+	body, err = send(dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, confirm.ID, yes.ID), dynamics.ReportCommandTargets{
 		ConfirmRootID: confirm.ID,
 		ConfirmYesID:  yes.ID,
 	})

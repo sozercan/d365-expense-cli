@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -255,15 +256,22 @@ func normalizeNotes(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
 }
 
-// expenseLineSession tracks details-form controls and line records across the
-// responses of one report-creation workflow.
+// expenseLineSession tracks details-form controls and the report's lines
+// across the responses of one workflow.
 type expenseLineSession struct {
 	client             *Client
 	detailsRootID      string
 	newExpenseButtonID string
 	cardMenu           dynamics.ModelNode
 	itemizeButton      dynamics.ModelNode
-	knownLines         map[string]bool
+	// lines counts the report's lines by lineKey from the latest full list
+	// Dynamics sent; nil until one is seen. Lines are compared by content
+	// because RecIds in reloaded lists follow row position, not the record.
+	lines map[string]int
+}
+
+func lineKey(category, date string) string {
+	return strings.ToLower(strings.TrimSpace(category)) + "|" + date
 }
 
 // addExpenseLines adds every requested line to the open Draft. The caller must
@@ -281,9 +289,8 @@ func (client *Client) addExpenseLines(ctx context.Context, draft openDraftDetail
 		client:             client,
 		detailsRootID:      draft.detailsRootID,
 		newExpenseButtonID: newExpense.ID,
-		knownLines:         make(map[string]bool),
 	}
-	if _, err := session.newLines(draft.responseBody); err != nil {
+	if err := session.observeLines(draft.responseBody); err != nil {
 		return nil, err
 	}
 	results := make([]ExpenseLineResult, 0, len(lines))
@@ -317,27 +324,75 @@ func (session *expenseLineSession) send(ctx context.Context, messages []dynamics
 	if node, ok := model.FindControlInRoot(dynamics.ControlItemizeExpenseButton, session.detailsRootID); ok {
 		session.itemizeButton = dynamics.MergeModelNode(session.itemizeButton, node)
 	}
+	if err := session.observeLines(body); err != nil {
+		return nil, err
+	}
 	return body, nil
 }
 
-// newLines returns details-form expense lines first seen in body, keyed by
-// RecId with their latest fields, and marks them known.
-func (session *expenseLineSession) newLines(body []byte) (map[string]map[string]string, error) {
-	records, err := dynamics.DiscoverDataRecords(body, dynamics.DataSourceExpenseLines)
+// observeLines replaces the line counts when body loads the whole list. A list
+// whose rows lack category or date makes the counts unknown.
+func (session *expenseLineSession) observeLines(body []byte) error {
+	ids, ok, err := dynamics.DiscoverFullList(body, dynamics.DataSourceExpenseLines, session.detailsRootID)
+	if err != nil || !ok {
+		return err
+	}
+	fields, err := recordsByTracking(body, dynamics.DataSourceExpenseLines, session.detailsRootID)
+	if err != nil {
+		return err
+	}
+	counts := make(map[string]int, len(ids))
+	for _, id := range ids {
+		row := fields[id]
+		if row["categoryOrSubCategoryName_dataMethod"] == "" || row["TransDate_field"] == "" {
+			session.lines = nil
+			return nil
+		}
+		counts[lineKey(row["categoryOrSubCategoryName_dataMethod"], row["TransDate_field"])]++
+	}
+	session.lines = counts
+	return nil
+}
+
+// linesAdded returns how the latest full list differs from before, failing
+// when either list is unknown.
+func (session *expenseLineSession) linesAdded(before map[string]int) (map[string]int, error) {
+	if before == nil || session.lines == nil {
+		return nil, errors.New("Dynamics did not list the report's lines")
+	}
+	added := make(map[string]int)
+	for key, count := range session.lines {
+		if difference := count - before[key]; difference != 0 {
+			added[key] = difference
+		}
+	}
+	for key, count := range before {
+		if _, ok := session.lines[key]; !ok {
+			added[key] = -count
+		}
+	}
+	return added, nil
+}
+
+func recordsByTracking(body []byte, dataSource, rootID string) (map[string]map[string]string, error) {
+	records, err := dynamics.DiscoverDataRecords(body, dataSource)
 	if err != nil {
 		return nil, err
 	}
-	lines := make(map[string]map[string]string)
+	rows := make(map[string]map[string]string)
 	for _, record := range records {
-		if record.RootID != session.detailsRootID || record.RecID == "" || record.RecID == "0" || session.knownLines[record.RecID] {
+		tracking := record.Fields["MasterTrackingId"]
+		if record.RootID != rootID || tracking == "" {
 			continue
 		}
-		lines[record.RecID] = record.Fields
+		if rows[tracking] == nil {
+			rows[tracking] = make(map[string]string)
+		}
+		for name, value := range record.Fields {
+			rows[tracking][name] = value
+		}
 	}
-	for recID := range lines {
-		session.knownLines[recID] = true
-	}
-	return lines, nil
+	return rows, nil
 }
 
 func (session *expenseLineSession) addLine(ctx context.Context, line ExpenseLineInput) (ExpenseLineResult, error) {
@@ -398,6 +453,7 @@ func (session *expenseLineSession) addLine(ctx context.Context, line ExpenseLine
 		}
 	}
 
+	before := session.lines
 	saveClick := dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, dialog.ID, save.ID)
 	body, err = session.send(ctx, []dynamics.Message{saveClick}, dynamics.ExpenseLineCommandTargets{
 		DialogRootID: dialog.ID,
@@ -409,17 +465,12 @@ func (session *expenseLineSession) addLine(ctx context.Context, line ExpenseLine
 	if closed, err := dynamics.ResponseDeletesViewModel(body, dialog.ID); err != nil || !closed {
 		return ExpenseLineResult{}, errors.New("save expense: New expense dialog did not close")
 	}
-	saved, err := session.newLines(body)
+	added, err := session.linesAdded(before)
 	if err != nil {
-		return ExpenseLineResult{}, err
+		return ExpenseLineResult{}, fmt.Errorf("save expense: %w", err)
 	}
-	if len(saved) != 1 {
-		return ExpenseLineResult{}, fmt.Errorf("save expense: expected one new expense line, found %d", len(saved))
-	}
-	for _, record := range saved {
-		if record["TransDate_field"] != line.Date || !dynamics.TrimmedEqualFold(record["categoryOrSubCategoryName_dataMethod"], line.Category) {
-			return ExpenseLineResult{}, errors.New("save expense: saved line does not match the requested category and date")
-		}
+	if want := map[string]int{lineKey(line.Category, line.Date): 1}; !reflect.DeepEqual(added, want) {
+		return ExpenseLineResult{}, fmt.Errorf("save expense: the report's lines changed by %v, want one %s line on %s", added, line.Category, line.Date)
 	}
 
 	result := ExpenseLineResult{Category: line.Category, Date: line.Date, Amount: line.Amount}
@@ -543,6 +594,20 @@ func (session *expenseLineSession) itemize(ctx context.Context, line ExpenseLine
 	expected := make(map[string]int)
 	wantLines := 0
 	for index, row := range line.Itemization {
+		start := line.Date
+		if row.StartDate != "" {
+			start = row.StartDate
+		}
+		first, err := time.Parse(expenseDateLayout, start)
+		if err != nil {
+			return 0, fmt.Errorf("row %d: start date must use YYYY-MM-DD", index+1)
+		}
+		for day := 0; day < row.Days; day++ {
+			expected[lineKey(row.Subcategory, first.AddDate(0, 0, day).Format(expenseDateLayout))]++
+		}
+		wantLines += row.Days
+	}
+	for index, row := range line.Itemization {
 		if index > 0 {
 			newRow := dynamics.BuildNewItemizationRowMessage(client.nextClientSequence, form.ID, controls[dynamics.ControlItemizationNewButton])
 			body, err := session.send(ctx, []dynamics.Message{newRow}, dynamics.ExpenseLineCommandTargets{
@@ -597,13 +662,12 @@ func (session *expenseLineSession) itemize(ctx context.Context, line ExpenseLine
 			return 0, fmt.Errorf("row %d: Dynamics reports start date %q, daily rate %q, and days %q", index+1,
 				current["StartDate_field"], current["DailyRate_field"], current["Quantity_field"])
 		}
-		expected[strings.ToLower(strings.TrimSpace(row.Subcategory))] += row.Days
-		wantLines += row.Days
 	}
 	if !decimalEqual("0", remaining) {
 		return 0, fmt.Errorf("Dynamics reports %q still to itemize", remaining)
 	}
 
+	before := session.lines
 	closeClick := dynamics.BuildSaveAndCloseClickMessage(client.nextClientSequence, form.ID, controls[dynamics.ControlItemizationCloseButton])
 	body, err = session.send(ctx, []dynamics.Message{closeClick}, dynamics.ExpenseLineCommandTargets{
 		ItemizeRootID:  form.ID,
@@ -615,19 +679,14 @@ func (session *expenseLineSession) itemize(ctx context.Context, line ExpenseLine
 	if closed, err := dynamics.ResponseDeletesViewModel(body, form.ID); err != nil || !closed {
 		return 0, errors.New("close Itemize: Itemize expense dialog did not close")
 	}
-	itemized, err := session.newLines(body)
+	added, err := session.linesAdded(before)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("close Itemize: %w", err)
 	}
-	for _, record := range itemized {
-		expected[strings.ToLower(strings.TrimSpace(record["categoryOrSubCategoryName_dataMethod"]))]--
+	if !reflect.DeepEqual(added, expected) {
+		return 0, fmt.Errorf("close Itemize: the report's lines changed by %v, want %v", added, expected)
 	}
-	for _, remainingDays := range expected {
-		if remainingDays != 0 || len(itemized) != wantLines {
-			return 0, fmt.Errorf("close Itemize: expected %d itemized lines matching the requested subcategories, found %d", wantLines, len(itemized))
-		}
-	}
-	return len(itemized), nil
+	return wantLines, nil
 }
 
 // mergeRecords applies every record update in rootID, optionally limited to

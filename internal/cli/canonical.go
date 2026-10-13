@@ -100,7 +100,30 @@ func (command *receiptAttachCommand) Validate() error {
 }
 
 type reportCommand struct {
-	Delete reportDeleteCommand `cmd:"" help:"Delete an existing Draft report."`
+	Show    reportShowCommand    `cmd:"" help:"List the expense lines of an existing Draft report."`
+	Itemize reportItemizeCommand `cmd:"" help:"Itemize one expense line of an existing Draft report."`
+	Submit  reportSubmitCommand  `cmd:"" help:"Submit an existing Draft report."`
+	Delete  reportDeleteCommand  `cmd:"" help:"Delete an existing Draft report."`
+}
+
+type reportShowCommand struct {
+	profileSource `embed:""`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+}
+
+type reportItemizeCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	Line          int    `name:"line" required:"" help:"Line number shown by report show."`
+	Itemization   string `name:"itemization" required:"" type:"existingfile" placeholder:"FILE" help:"JSON file of itemization rows."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportSubmitCommand struct {
+	profileSource `embed:""`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
 
 type reportDeleteCommand struct {
@@ -191,6 +214,9 @@ type legacyRunners struct {
 	createReportWithReceipts func([]string, io.Writer, io.Writer) int
 	attachReceipt            func([]string, io.Writer, io.Writer) int
 	deleteReport             func([]string, io.Writer, io.Writer) int
+	showReport               func([]string, io.Writer, io.Writer) int
+	itemizeReportLine        func([]string, io.Writer, io.Writer) int
+	submitReport             func([]string, io.Writer, io.Writer) int
 	sessionImport            func([]string, io.Writer, io.Writer) int
 	sessionImportCDP         func([]string, io.Writer, io.Writer) int
 	sessionList              func([]string, io.Writer, io.Writer) int
@@ -208,6 +234,9 @@ func defaultLegacyRunners() legacyRunners {
 		createReportWithReceipts: runCreateDraftWithReceipts,
 		attachReceipt:            runAttachReceipt,
 		deleteReport:             runDeleteReport,
+		showReport:               runShowReport,
+		itemizeReportLine:        runItemizeReportLine,
+		submitReport:             runSubmitReport,
 		sessionImport:            runSessionImport,
 		sessionImportCDP:         runSessionImportCDP,
 		sessionList:              runSessionList,
@@ -313,6 +342,40 @@ func (command *reportDeleteCommand) Run(rt *commandRuntime) error {
 		args = append(args, "--execute")
 	}
 	return invokeLegacy(rt.runners.deleteReport, args, rt)
+}
+
+func reportArgs(source profileSource, report string, timeout time.Duration, fallback time.Duration, dryRun bool) []string {
+	args := append(sourceArgs(source), "--report", report, "--timeout", selectedTimeout(timeout, fallback).String())
+	if !dryRun {
+		args = append(args, "--execute")
+	}
+	return args
+}
+
+func (command *reportShowCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.showReport, reportArgs(command.profileSource, command.Report, rt.global.Timeout, 2*time.Minute, false), rt)
+}
+
+func (command *reportItemizeCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
+	args = append(args, "--line", strconv.Itoa(command.Line), "--itemization", command.Itemization)
+	return invokeLegacy(rt.runners.itemizeReportLine, args, rt)
+}
+
+func (command *reportSubmitCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.submitReport, reportArgs(command.profileSource, command.Report, rt.global.Timeout, 3*time.Minute, command.DryRun), rt)
 }
 
 func (command *sessionImportCommand) Run(rt *commandRuntime) error {

@@ -60,6 +60,9 @@ func TestParseBootstrapExtractsWorkspaceSessionWithoutDraftFlow(t *testing.T) {
 	if got, want := profile.ReportsGrid, capture.ReportsGridTarget("workspace-root", "reports-grid"); got != want {
 		t.Errorf("ReportsGrid = %#v, want %#v", got, want)
 	}
+	if got, want := profile.ReportLink, capture.ReportLinkTarget("workspace-root", "report-link"); got != want {
+		t.Errorf("ReportLink = %#v, want %#v", got, want)
+	}
 	if err := profile.Validate(); err != nil {
 		t.Errorf("Validate() error = %v", err)
 	}

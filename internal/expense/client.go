@@ -99,6 +99,7 @@ type Client struct {
 	workspaceRootID string
 	createButtonID  string
 	reportsGridID   string
+	reportLinkID    string
 }
 
 // New validates and snapshots a captured Dynamics session.
@@ -112,7 +113,7 @@ func New(profile *capture.Profile, options ...Option) (*Client, error) {
 	if err := validateDraftFlow(profile.Draft); err != nil {
 		return nil, err
 	}
-	return newClient(profile.Session, profile.Draft.NewReport, "", options...)
+	return newClient(profile.Session, profile.Draft.NewReport, capture.CommandTarget{}, capture.CommandTarget{}, options...)
 }
 
 // NewFromBootstrap validates and snapshots a current Expense workspace session
@@ -124,10 +125,10 @@ func NewFromBootstrap(profile *capture.BootstrapProfile, options ...Option) (*Cl
 	if err := profile.Validate(); err != nil {
 		return nil, fmt.Errorf("expense: validate bootstrap profile: %w", err)
 	}
-	return newClient(profile.Session, profile.NewReport, profile.ReportsGrid.TargetID, options...)
+	return newClient(profile.Session, profile.NewReport, profile.ReportsGrid, profile.ReportLink, options...)
 }
 
-func newClient(session capture.SessionProfile, newReport capture.CommandTarget, reportsGridID string, options ...Option) (*Client, error) {
+func newClient(session capture.SessionProfile, newReport, reportsGrid, reportLink capture.CommandTarget, options ...Option) (*Client, error) {
 	endpoint, origin, err := validateEndpoint(session)
 	if err != nil {
 		return nil, err
@@ -167,7 +168,8 @@ func newClient(session capture.SessionProfile, newReport capture.CommandTarget, 
 		nextClientSequence: session.NextClientSequence,
 		workspaceRootID:    newReport.RootID,
 		createButtonID:     newReport.TargetID,
-		reportsGridID:      reportsGridID,
+		reportsGridID:      reportsGrid.TargetID,
+		reportLinkID:       reportLink.TargetID,
 	}, nil
 }
 
@@ -202,6 +204,9 @@ func (client *Client) SnapshotBootstrapProfile() (*capture.BootstrapProfile, err
 	}
 	if client.reportsGridID != "" {
 		profile.ReportsGrid = capture.ReportsGridTarget(client.workspaceRootID, client.reportsGridID)
+	}
+	if client.reportLinkID != "" {
+		profile.ReportLink = capture.ReportLinkTarget(client.workspaceRootID, client.reportLinkID)
 	}
 	if err := profile.Validate(); err != nil {
 		return nil, fmt.Errorf("expense: validate bootstrap snapshot: %w", err)
@@ -440,10 +445,15 @@ func (client *Client) restoreWorkspace(body []byte, source string) error {
 	}
 	// Grid IDs belong to one workspace instance; forget a stale one rather
 	// than guess when the workspace root changes.
-	if grid, ok := model.FindControlInRoot(dynamics.ControlReportsGrid, workspace.ID); ok && grid.ID != "" {
-		client.reportsGridID = grid.ID
-	} else if workspace.ID != client.workspaceRootID {
-		client.reportsGridID = ""
+	for _, known := range []struct {
+		name string
+		id   *string
+	}{{dynamics.ControlReportsGrid, &client.reportsGridID}, {dynamics.ControlReportLink, &client.reportLinkID}} {
+		if node, ok := model.FindControlInRoot(known.name, workspace.ID); ok && node.ID != "" {
+			*known.id = node.ID
+		} else if workspace.ID != client.workspaceRootID {
+			*known.id = ""
+		}
 	}
 	client.workspaceRootID = workspace.ID
 	client.createButtonID = newReport.ID

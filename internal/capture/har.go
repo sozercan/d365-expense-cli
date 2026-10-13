@@ -152,20 +152,56 @@ func parseHAR(r io.Reader) (*Profile, error) {
 	return profile, nil
 }
 
-func parseBootstrapSessionHAR(r io.Reader) (*BootstrapProfile, error) {
+func parseBootstrapSessionHAR(r io.Reader) (*BootstrapProfile, []exchange, error) {
 	exchanges, err := decodeHARExchanges(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	selected, err := selectLatestBootstrapGroup(exchanges)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	session, err := extractSessionProfile(selected)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &BootstrapProfile{Session: session}, nil
+	return &BootstrapProfile{Session: session}, withFormLoad(exchanges, selected), nil
+}
+
+// withFormLoad prepends the page's initial form load to the selected group.
+// The browser sends that first request before its session headers and
+// Language are established, so it forms its own group; sequence continuity
+// proves it starts the same channel session and carries the workspace model.
+func withFormLoad(exchanges, selected []exchange) []exchange {
+	first := len(exchanges) - len(selected)
+	if first == 0 || len(selected) == 0 {
+		return selected
+	}
+	previous, next := exchanges[first-1], selected[0]
+	if !exchangeSucceeded(&previous) || previous.request.Language != "" || previous.endpoint == nil || next.endpoint == nil ||
+		previous.endpoint.Path != next.endpoint.Path || exchangeKey(previous).origin != exchangeKey(next).origin ||
+		previous.request.CompanyID != next.request.CompanyID || !sameChannel(previous.request, next.request) {
+		return selected
+	}
+	serverSequence := int64(0)
+	for _, message := range previous.response.Messages {
+		if message.SequenceNumber != nil && *message.SequenceNumber > serverSequence {
+			serverSequence = *message.SequenceNumber
+		}
+	}
+	nextFirst := int64(0)
+	if len(next.request.Messages) != 0 && next.request.Messages[0].SequenceNumber != nil {
+		nextFirst = *next.request.Messages[0].SequenceNumber
+	}
+	if next.request.LastAcknowledgedSequenceNumber == nil || *next.request.LastAcknowledgedSequenceNumber != serverSequence ||
+		nextFirst != previous.maxRequestSequence+1 {
+		return selected
+	}
+	return exchanges[first-1:]
+}
+
+func sameChannel(left, right wireEnvelope) bool {
+	return left.ChannelID != nil && right.ChannelID != nil && *left.ChannelID == *right.ChannelID
 }
 
 func parseBootstrapHAR(r io.Reader) (*BootstrapProfile, error) {
@@ -186,23 +222,28 @@ func parseBootstrapHAR(r io.Reader) (*BootstrapProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BootstrapProfile{Session: session, NewReport: newReport, ReportsGrid: extractWorkspaceReportsGrid(selected, newReport.RootID)}, nil
+	profile := &BootstrapProfile{Session: session, NewReport: newReport}
+	profile.ReportsGrid, profile.ReportLink = extractWorkspaceReportTargets(selected, newReport.RootID)
+	return profile, nil
 }
 
-// extractWorkspaceReportsGrid returns the unique reports grid in the workspace
-// root, or a zero target when the capture does not expose exactly one.
-func extractWorkspaceReportsGrid(exchanges []exchange, rootID string) CommandTarget {
+// extractWorkspaceReportTargets returns the unique reports grid and report
+// link in the workspace root; each is zero unless exactly one is exposed.
+func extractWorkspaceReportTargets(exchanges []exchange, rootID string) (CommandTarget, CommandTarget) {
 	catalog := newTargetCatalog()
 	for i := range exchanges {
 		if exchangeSucceeded(&exchanges[i]) {
 			catalog.collect(exchanges[i].responseBody)
 		}
 	}
-	gridID, ok := uniqueCatalogTarget(catalog, rootID, reportsGridControl)
-	if !ok {
-		return CommandTarget{}
+	var grid, link CommandTarget
+	if gridID, ok := uniqueCatalogTarget(catalog, rootID, reportsGridControl); ok {
+		grid = ReportsGridTarget(rootID, gridID)
 	}
-	return ReportsGridTarget(rootID, gridID)
+	if linkID, ok := uniqueCatalogTarget(catalog, rootID, reportLinkControl); ok {
+		link = ReportLinkTarget(rootID, linkID)
+	}
+	return grid, link
 }
 
 func decodeHARExchanges(r io.Reader) ([]exchange, error) {
