@@ -14,6 +14,10 @@ import (
 
 var version = "dev"
 
+// defaultDeleteTimeout allows for Dynamics taking close to a minute to delete
+// a report with lines.
+const defaultDeleteTimeout = 3 * time.Minute
+
 // expenseLineTimeout is the default time budget added per expense line.
 const expenseLineTimeout = 90 * time.Second
 
@@ -27,6 +31,7 @@ type canonicalCLI struct {
 
 	Create     createCommand  `cmd:"" help:"Create and submit an expense report; use --draft to save without submitting."`
 	Receipt    receiptCommand `cmd:"" help:"Manage receipts on existing Draft reports."`
+	Report     reportCommand  `cmd:"" help:"Manage existing Draft reports."`
 	Session    sessionCommand `cmd:"" help:"Manage imported Dynamics sessions."`
 	HAR        harCommand     `cmd:"" name:"har" help:"Inspect or capture private HAR files."`
 	VersionCmd versionCommand `cmd:"" name:"version" help:"Print version information."`
@@ -92,6 +97,24 @@ func (command *receiptAttachCommand) Validate() error {
 		return errors.New("--draft is required")
 	}
 	return nil
+}
+
+type reportCommand struct {
+	Delete reportDeleteCommand `cmd:"" help:"Delete an existing Draft report."`
+}
+
+type reportDeleteCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: delete only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+func (command *reportDeleteCommand) Validate() error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	return command.profileSource.validate()
 }
 
 type sessionCommand struct {
@@ -167,6 +190,7 @@ type legacyRunners struct {
 	createReport             func([]string, io.Writer, io.Writer) int
 	createReportWithReceipts func([]string, io.Writer, io.Writer) int
 	attachReceipt            func([]string, io.Writer, io.Writer) int
+	deleteReport             func([]string, io.Writer, io.Writer) int
 	sessionImport            func([]string, io.Writer, io.Writer) int
 	sessionImportCDP         func([]string, io.Writer, io.Writer) int
 	sessionList              func([]string, io.Writer, io.Writer) int
@@ -183,6 +207,7 @@ func defaultLegacyRunners() legacyRunners {
 		createReport:             runCreateDraft,
 		createReportWithReceipts: runCreateDraftWithReceipts,
 		attachReceipt:            runAttachReceipt,
+		deleteReport:             runDeleteReport,
 		sessionImport:            runSessionImport,
 		sessionImportCDP:         runSessionImportCDP,
 		sessionList:              runSessionList,
@@ -276,6 +301,18 @@ func (command *receiptAttachCommand) Run(rt *commandRuntime) error {
 		args = append(args, "--execute")
 	}
 	return invokeLegacy(rt.runners.attachReceipt, args, rt)
+}
+
+func (command *reportDeleteCommand) Run(rt *commandRuntime) error {
+	if err := command.Validate(); err != nil {
+		return err
+	}
+	args := append(sourceArgs(command.profileSource), "--report", command.Report,
+		"--timeout", selectedTimeout(rt.global.Timeout, defaultDeleteTimeout).String())
+	if !command.DryRun {
+		args = append(args, "--execute")
+	}
+	return invokeLegacy(rt.runners.deleteReport, args, rt)
 }
 
 func (command *sessionImportCommand) Run(rt *commandRuntime) error {

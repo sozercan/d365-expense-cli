@@ -58,6 +58,9 @@ type Session struct {
 	Headers            []Header      `json:"headers"`
 	Cookies            []Cookie      `json:"cookies"`
 	NewReport          CommandTarget `json:"newReport"`
+	// ReportsGrid is absent for sessions imported before report selection
+	// was supported.
+	ReportsGrid *CommandTarget `json:"reportsGrid,omitempty"`
 }
 
 // Header is one persisted HTTP request header. Values can contain credentials.
@@ -141,6 +144,7 @@ func fromBootstrapAt(profile *capture.BootstrapProfile, now time.Time) (*Session
 		Headers:            headersFromHTTP(profile.Session.RequestHeaders),
 		Cookies:            cookiesFromHTTP(profile.Session.Cookies),
 		NewReport:          commandTargetFromCapture(profile.NewReport),
+		ReportsGrid:        optionalTargetFromCapture(profile.ReportsGrid),
 	}
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("session: convert capture bootstrap profile: %w", err)
@@ -188,6 +192,7 @@ func (session *Session) ApplyBootstrap(profile *capture.BootstrapProfile) error 
 		Headers:            headersFromHTTP(profile.Session.RequestHeaders),
 		Cookies:            cookiesFromHTTP(profile.Session.Cookies),
 		NewReport:          commandTargetFromCapture(profile.NewReport),
+		ReportsGrid:        optionalTargetFromCapture(profile.ReportsGrid),
 	}
 	if err := updated.Validate(); err != nil {
 		return fmt.Errorf("session: apply capture bootstrap profile: %w", err)
@@ -265,6 +270,13 @@ func (session *Session) Validate() error {
 	}
 	if err := validateCommandTarget(session.NewReport); err != nil {
 		return err
+	}
+	if session.ReportsGrid != nil {
+		for _, value := range []string{session.ReportsGrid.CommandName, session.ReportsGrid.RootID, session.ReportsGrid.TargetID, session.ReportsGrid.ControlName} {
+			if strings.TrimSpace(value) == "" || len(value) > maxIdentifierSize || containsControl(value) {
+				return errors.New("session reports-grid target is invalid")
+			}
+		}
 	}
 
 	profile := session.bootstrapUnchecked()
@@ -392,7 +404,17 @@ func (summary Summary) String() string {
 }
 
 func (session *Session) bootstrapUnchecked() *capture.BootstrapProfile {
+	var reportsGrid capture.CommandTarget
+	if session.ReportsGrid != nil {
+		reportsGrid = capture.CommandTarget{
+			CommandName: session.ReportsGrid.CommandName,
+			RootID:      session.ReportsGrid.RootID,
+			TargetID:    session.ReportsGrid.TargetID,
+			ControlName: session.ReportsGrid.ControlName,
+		}
+	}
 	return &capture.BootstrapProfile{
+		ReportsGrid: reportsGrid,
 		Session: capture.SessionProfile{
 			BaseURL:            session.BaseURL,
 			EndpointURL:        session.EndpointURL,
@@ -455,6 +477,14 @@ func cookiesFromHTTP(cookies []*http.Cookie) []Cookie {
 		return cookieKey(result[i]) < cookieKey(result[j])
 	})
 	return result
+}
+
+func optionalTargetFromCapture(target capture.CommandTarget) *CommandTarget {
+	if target == (capture.CommandTarget{}) {
+		return nil
+	}
+	converted := commandTargetFromCapture(target)
+	return &converted
 }
 
 func commandTargetFromCapture(target capture.CommandTarget) CommandTarget {

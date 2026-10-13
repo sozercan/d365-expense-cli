@@ -116,6 +116,13 @@ func runSessionImportCDP(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "session import-cdp: validate captured state: %v\n", err)
 		return 1
 	}
+	if pageState.ReportsGridID != "" {
+		profile.ReportsGrid = capture.ReportsGridTarget(pageState.WorkspaceRootID, pageState.ReportsGridID)
+		if err := profile.Validate(); err != nil {
+			fmt.Fprintf(stderr, "session import-cdp: validate captured state: %v\n", err)
+			return 1
+		}
+	}
 	standalone, err := sessionstore.FromBootstrap(profile)
 	if err != nil {
 		fmt.Fprintf(stderr, "session import-cdp: %v\n", err)

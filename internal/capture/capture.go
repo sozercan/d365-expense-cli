@@ -64,6 +64,20 @@ type Profile struct {
 type BootstrapProfile struct {
 	Session   SessionProfile
 	NewReport CommandTarget
+	// ReportsGrid is the workspace's expense-report grid. It is optional
+	// because it is only needed to select an existing report.
+	ReportsGrid CommandTarget
+}
+
+const (
+	reportsGridCommand = "ChangeSelectedIndex"
+	reportsGridControl = "ReportsTabPageGrid"
+)
+
+// ReportsGridTarget returns the allowlisted reports-grid target for a
+// workspace root and grid control ID.
+func ReportsGridTarget(rootID, gridID string) CommandTarget {
+	return CommandTarget{CommandName: reportsGridCommand, RootID: rootID, TargetID: gridID, ControlName: reportsGridControl}
 }
 
 // SessionProfile contains the HTTP and ReliableCommunicationManager state
@@ -211,6 +225,14 @@ func (p *BootstrapProfile) Validate() error {
 	}
 	if p.NewReport.CommandName != "Click" || p.NewReport.ControlName != "NewExpenseReportReportsTab" {
 		return errors.New("capture bootstrap new-report target is not allowlisted")
+	}
+	if p.ReportsGrid != (CommandTarget{}) {
+		if err := validateTarget("reports-grid", p.ReportsGrid); err != nil {
+			return err
+		}
+		if p.ReportsGrid != ReportsGridTarget(p.NewReport.RootID, p.ReportsGrid.TargetID) {
+			return errors.New("capture bootstrap reports-grid target is not allowlisted")
+		}
 	}
 	return nil
 }

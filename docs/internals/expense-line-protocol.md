@@ -1,4 +1,4 @@
-# Observed expense line protocol
+# Observed expense line and Draft deletion protocol
 
 Captured on October 13, 2026 by adding a Hotel line to a new Draft, itemizing
 it into a room rate and hotel tax, and saving the report as a Draft. The
@@ -88,3 +88,32 @@ workflow, posting, approval, and recall command names. Any verification
 failure stops the workflow: lines already saved stay on the report, later lines
 are not added, the report is not saved and closed by the CLI, and a named
 session becomes `uncertain`. The report remains a Draft.
+
+## Delete a Draft
+
+Captured on October 13, 2026 from the workspace Reports grid, up to and
+including the confirmation dialog, then verified by deleting the test Drafts
+with the CLI.
+
+`session import` records the workspace's `ReportsTabPageGrid` control as an
+optional `reportsGrid` target. `report delete` sends one message per stage:
+
+1. `ExecuteShortcuts("Refresh")` on the workspace root. The response reloads
+   the first page of `TrvExpTable_ds` rows with fresh `MasterTrackingId`
+   values, `ExpNumber_field`, `ApprovalStatus_field` (`1` is Draft),
+   `_RESERVED_IsMarked`, the collection's `ActiveMasterTrackingId`, and
+   `DeleteButtonReportsTab`.
+2. `ChangeSelectedIndex` on the grid with `[target, 1, active, false, true]`
+   (current row, mark mode, range pivot). `ResetThrottleTime` and
+   `ThrottleFirst` are serialized as strings. The response must mark only the
+   target row; when the target was already active, Dynamics omits the active
+   row.
+3. `UpdateLastSelectedControl("ReportsTabPageGrid")` plus `Click` on
+   `DeleteButtonReportsTab`. The response opens `SysBoxForm_form` with `Yes` and
+   `No` buttons.
+4. `Click` on `Yes`. The response must close the confirmation dialog.
+5. `Refresh` again; the report number must no longer be listed.
+
+Dynamics deletes every marked row, which is why the CLI refuses to continue
+when any other row is marked. Deleting a report with lines can take close to a
+minute, so the default timeout is three minutes.

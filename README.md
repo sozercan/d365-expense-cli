@@ -8,6 +8,7 @@ receipts, submit reports, or save them as Drafts.
 - Create and submit a new expense report.
 - Save a new report as a Draft with `--draft`.
 - Add expense lines to a new Draft, including itemized hotel stays.
+- Delete an existing Draft report.
 - Attach up to 20 PNG receipts to a new report.
 - Preview a report with `--dry-run` before making changes.
 - Reuse a named authenticated Dynamics session.
@@ -208,6 +209,22 @@ d365-expense receipt attach \
 Remove `--dry-run` after reviewing the command. This operation attaches the
 receipt and keeps the report as a Draft.
 
+## Delete a Draft
+
+```bash
+d365-expense report delete \
+  --draft \
+  --session work \
+  --report <report-id> \
+  --dry-run
+```
+
+Remove `--dry-run` to delete. The command refreshes the workspace report list,
+requires exactly one listed report with that number in Draft status, marks only
+that report, confirms Dynamics' delete prompt, and verifies the report is gone.
+It refuses submitted or processed reports and reports beyond the first page of
+the list. Sessions imported before this command existed must be re-imported.
+
 ## Sessions
 
 ```bash
@@ -269,7 +286,8 @@ See [Troubleshooting](docs/troubleshooting.md) for detailed recovery guidance.
 ## Limitations
 
 - `create` operates on new reports; it cannot reopen and submit an existing
-  Draft by report number.
+  Draft by report number. `report delete` is the only existing-report command
+  that works from a session.
 - The CLI does not approve, post, or recall reports.
 - Receipts must be PNG files and are attached at report level.
 - Expense lines are supported only on new Drafts created with `--draft`.
@@ -305,5 +323,5 @@ data.
 
 - [Dynamics protocol internals](docs/internals/dynamics-protocol.md)
 - [Receipt protocol internals](docs/internals/receipt-protocol.md)
-- [Expense line protocol internals](docs/internals/expense-line-protocol.md)
+- [Expense line and deletion protocol internals](docs/internals/expense-line-protocol.md)
 - [Contributing](CONTRIBUTING.md)

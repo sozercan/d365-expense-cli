@@ -1,7 +1,8 @@
 // Package dynamics implements the small, observed subset of the Dynamics 365
 // Finance ReliableCommunicationManager JSON protocol needed to create an
-// expense-report Draft, add and itemize expense lines, attach receipts, and
-// explicitly select the new report's exact Submit action.
+// expense-report Draft, add and itemize expense lines, attach receipts, delete
+// an existing Draft, and explicitly select the new report's exact Submit
+// action.
 //
 // The protocol is an internal Dynamics web-client protocol, not a supported
 // public API. The types in this package deliberately retain unknown JSON fields

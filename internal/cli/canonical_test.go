@@ -191,3 +191,26 @@ func TestLegacyReplacementPreservesCreateSubmitIntent(t *testing.T) {
 		})
 	}
 }
+
+func TestCanonicalReportDeleteRequiresDraftAndRoutesReport(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	if code := runCanonical([]string{"report", "delete", "--session", "work", "--report", "D0001"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("missing --draft code = %d", code)
+	}
+
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.deleteReport = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCanonicalWithRunners([]string{"report", "delete", "--draft", "--session", "work", "--report", "D0001"}, &stdout, &stderr, runners); code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	if want := []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--execute"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}

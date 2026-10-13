@@ -49,6 +49,9 @@ const (
 type DynamicsBootstrapState struct {
 	WorkspaceRootID string
 	NewReportID     string
+	// ReportsGridID is empty unless exactly one reports grid is rendered in
+	// the same workspace root.
+	ReportsGridID string
 }
 
 // Options controls a CDP-backed HAR capture. Capture opens a new tab in the
@@ -204,13 +207,18 @@ func Capture(parent context.Context, options Options) (*har.Archive, error) {
 		var discovered struct {
 			WorkspaceRootID string `json:"workspaceRootId"`
 			NewReportID     string `json:"newReportId"`
+			ReportsGridID   string `json:"reportsGridId"`
 		}
 		expression := `(() => {
 		  const matches = [...document.querySelectorAll('[data-dyn-controlname="NewExpenseReportReportsTab"]')];
-		  if (matches.length !== 1) return {workspaceRootId:'', newReportId:''};
+		  if (matches.length !== 1) return {workspaceRootId:'', newReportId:'', reportsGridId:''};
+		  const rootId = matches[0].getAttribute('data-dyn-rootserverid') || '';
+		  const grids = [...document.querySelectorAll('[data-dyn-controlname="ReportsTabPageGrid"]')]
+		    .filter((grid) => grid.getAttribute('data-dyn-rootserverid') === rootId);
 		  return {
-		    workspaceRootId: matches[0].getAttribute('data-dyn-rootserverid') || '',
-		    newReportId: matches[0].getAttribute('data-dyn-serverid') || ''
+		    workspaceRootId: rootId,
+		    newReportId: matches[0].getAttribute('data-dyn-serverid') || '',
+		    reportsGridId: grids.length === 1 ? (grids[0].getAttribute('data-dyn-serverid') || '') : ''
 		  };
 		})()`
 		if err := chromedp.Evaluate(expression, &discovered).Do(ctx); err != nil {
@@ -221,6 +229,7 @@ func Capture(parent context.Context, options Options) (*har.Archive, error) {
 		}
 		options.DynamicsBootstrap.WorkspaceRootID = discovered.WorkspaceRootID
 		options.DynamicsBootstrap.NewReportID = discovered.NewReportID
+		options.DynamicsBootstrap.ReportsGridID = discovered.ReportsGridID
 		return nil
 	})
 

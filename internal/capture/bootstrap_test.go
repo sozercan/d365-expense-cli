@@ -9,6 +9,26 @@ import (
 	"github.com/sozercan/d365-expense-cli/internal/capture"
 )
 
+func TestBootstrapValidateRejectsUnlistedReportsGrid(t *testing.T) {
+	profile, err := capture.ParseBootstrap(strings.NewReader(validBootstrapHAR(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, grid := range map[string]capture.CommandTarget{
+		"other root":    capture.ReportsGridTarget("other-root", "reports-grid"),
+		"other control": {CommandName: "ChangeSelectedIndex", RootID: "workspace-root", TargetID: "reports-grid", ControlName: "LinesGrid"},
+		"other command": {CommandName: "Click", RootID: "workspace-root", TargetID: "reports-grid", ControlName: "ReportsTabPageGrid"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := *profile
+			candidate.ReportsGrid = grid
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("Validate() accepted an unlisted reports grid")
+			}
+		})
+	}
+}
+
 func TestParseBootstrapExtractsWorkspaceSessionWithoutDraftFlow(t *testing.T) {
 	har := validBootstrapHAR(t)
 	profile, err := capture.ParseBootstrap(strings.NewReader(har))
@@ -36,6 +56,9 @@ func TestParseBootstrapExtractsWorkspaceSessionWithoutDraftFlow(t *testing.T) {
 	}
 	if got := profile.NewReport; got != wantTarget {
 		t.Errorf("NewReport = %#v, want %#v", got, wantTarget)
+	}
+	if got, want := profile.ReportsGrid, capture.ReportsGridTarget("workspace-root", "reports-grid"); got != want {
+		t.Errorf("ReportsGrid = %#v, want %#v", got, want)
 	}
 	if err := profile.Validate(); err != nil {
 		t.Errorf("Validate() error = %v", err)

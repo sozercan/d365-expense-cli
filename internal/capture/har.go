@@ -186,7 +186,23 @@ func parseBootstrapHAR(r io.Reader) (*BootstrapProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BootstrapProfile{Session: session, NewReport: newReport}, nil
+	return &BootstrapProfile{Session: session, NewReport: newReport, ReportsGrid: extractWorkspaceReportsGrid(selected, newReport.RootID)}, nil
+}
+
+// extractWorkspaceReportsGrid returns the unique reports grid in the workspace
+// root, or a zero target when the capture does not expose exactly one.
+func extractWorkspaceReportsGrid(exchanges []exchange, rootID string) CommandTarget {
+	catalog := newTargetCatalog()
+	for i := range exchanges {
+		if exchangeSucceeded(&exchanges[i]) {
+			catalog.collect(exchanges[i].responseBody)
+		}
+	}
+	gridID, ok := uniqueCatalogTarget(catalog, rootID, reportsGridControl)
+	if !ok {
+		return CommandTarget{}
+	}
+	return ReportsGridTarget(rootID, gridID)
 }
 
 func decodeHARExchanges(r io.Reader) ([]exchange, error) {

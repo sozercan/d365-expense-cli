@@ -377,8 +377,13 @@ func scriptedServer(t *testing.T, steps []scriptedStep) (*httptest.Server, *[]st
 			t.Errorf("request %d acknowledged %d, want %d", next+1, request.LastAcknowledgedSequenceNumber, serverSequence)
 		}
 		for _, message := range request.Messages {
-			for _, command := range mustCommands(t, message) {
-				emitted = append(emitted, command.CommandName+":"+command.TargetID)
+			for _, raw := range message.Interactions {
+				// Decode leniently: some captured commands use string booleans.
+				var command struct{ CommandName, TargetId string }
+				if err := json.Unmarshal(raw, &command); err != nil {
+					t.Errorf("decode interaction: %v", err)
+				}
+				emitted = append(emitted, command.CommandName+":"+command.TargetId)
 			}
 		}
 		if next >= len(steps) {
