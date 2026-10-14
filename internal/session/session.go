@@ -60,8 +60,20 @@ type Session struct {
 	NewReport          CommandTarget `json:"newReport"`
 	// ReportsGrid and ReportLink are absent for sessions imported before
 	// existing reports could be selected or opened.
-	ReportsGrid *CommandTarget `json:"reportsGrid,omitempty"`
-	ReportLink  *CommandTarget `json:"reportLink,omitempty"`
+	ReportsGrid   *CommandTarget `json:"reportsGrid,omitempty"`
+	ReportLink    *CommandTarget `json:"reportLink,omitempty"`
+	WorkspaceTabs *WorkspaceTabs `json:"workspaceTabs,omitempty"`
+}
+
+// WorkspaceTabs are the Expense workspace's tab page control IDs.
+type WorkspaceTabs struct {
+	Reports        string `json:"reports"`
+	Receipts       string `json:"receipts"`
+	Expenses       string `json:"expenses"`
+	ReceiptsGrid   string `json:"receiptsGrid,omitempty"`
+	ReceiptsDelete string `json:"receiptsDelete,omitempty"`
+	ExpensesGrid   string `json:"expensesGrid,omitempty"`
+	ExpensesDelete string `json:"expensesDelete,omitempty"`
 }
 
 // Header is one persisted HTTP request header. Values can contain credentials.
@@ -147,6 +159,7 @@ func fromBootstrapAt(profile *capture.BootstrapProfile, now time.Time) (*Session
 		NewReport:          commandTargetFromCapture(profile.NewReport),
 		ReportsGrid:        optionalTargetFromCapture(profile.ReportsGrid),
 		ReportLink:         optionalTargetFromCapture(profile.ReportLink),
+		WorkspaceTabs:      optionalTabsFromCapture(profile.WorkspaceTabs),
 	}
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("session: convert capture bootstrap profile: %w", err)
@@ -196,6 +209,7 @@ func (session *Session) ApplyBootstrap(profile *capture.BootstrapProfile) error 
 		NewReport:          commandTargetFromCapture(profile.NewReport),
 		ReportsGrid:        optionalTargetFromCapture(profile.ReportsGrid),
 		ReportLink:         optionalTargetFromCapture(profile.ReportLink),
+		WorkspaceTabs:      optionalTabsFromCapture(profile.WorkspaceTabs),
 	}
 	if err := updated.Validate(); err != nil {
 		return fmt.Errorf("session: apply capture bootstrap profile: %w", err)
@@ -413,6 +427,12 @@ func (session *Session) bootstrapUnchecked() *capture.BootstrapProfile {
 	return &capture.BootstrapProfile{
 		ReportsGrid: optionalTargetToCapture(session.ReportsGrid),
 		ReportLink:  optionalTargetToCapture(session.ReportLink),
+		WorkspaceTabs: func() capture.WorkspaceTabs {
+			if session.WorkspaceTabs == nil {
+				return capture.WorkspaceTabs{}
+			}
+			return capture.WorkspaceTabs(*session.WorkspaceTabs)
+		}(),
 		Session: capture.SessionProfile{
 			BaseURL:            session.BaseURL,
 			EndpointURL:        session.EndpointURL,
@@ -475,6 +495,14 @@ func cookiesFromHTTP(cookies []*http.Cookie) []Cookie {
 		return cookieKey(result[i]) < cookieKey(result[j])
 	})
 	return result
+}
+
+func optionalTabsFromCapture(tabs capture.WorkspaceTabs) *WorkspaceTabs {
+	if tabs == (capture.WorkspaceTabs{}) {
+		return nil
+	}
+	converted := WorkspaceTabs(tabs)
+	return &converted
 }
 
 func optionalTargetToCapture(target *CommandTarget) capture.CommandTarget {

@@ -24,6 +24,7 @@ func deleteClient(t *testing.T, baseURL string, withGrid bool, options ...expens
 	if withGrid {
 		profile.ReportsGrid = capture.ReportsGridTarget(deleteWorkspace, "grid")
 		profile.ReportLink = capture.ReportLinkTarget(deleteWorkspace, "link")
+		profile.WorkspaceTabs = capture.WorkspaceTabs{Reports: "reports-tab", Receipts: "receipts-tab", Expenses: "expenses-tab"}
 	}
 	client, err := expense.NewFromBootstrap(profile, options...)
 	if err != nil {

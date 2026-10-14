@@ -100,6 +100,7 @@ type Client struct {
 	createButtonID  string
 	reportsGridID   string
 	reportLinkID    string
+	workspaceTabs   capture.WorkspaceTabs
 }
 
 // New validates and snapshots a captured Dynamics session.
@@ -125,7 +126,12 @@ func NewFromBootstrap(profile *capture.BootstrapProfile, options ...Option) (*Cl
 	if err := profile.Validate(); err != nil {
 		return nil, fmt.Errorf("expense: validate bootstrap profile: %w", err)
 	}
-	return newClient(profile.Session, profile.NewReport, profile.ReportsGrid, profile.ReportLink, options...)
+	client, err := newClient(profile.Session, profile.NewReport, profile.ReportsGrid, profile.ReportLink, options...)
+	if err != nil {
+		return nil, err
+	}
+	client.workspaceTabs = profile.WorkspaceTabs
+	return client, nil
 }
 
 func newClient(session capture.SessionProfile, newReport, reportsGrid, reportLink capture.CommandTarget, options ...Option) (*Client, error) {
@@ -208,6 +214,7 @@ func (client *Client) SnapshotBootstrapProfile() (*capture.BootstrapProfile, err
 	if client.reportLinkID != "" {
 		profile.ReportLink = capture.ReportLinkTarget(client.workspaceRootID, client.reportLinkID)
 	}
+	profile.WorkspaceTabs = client.workspaceTabs
 	if err := profile.Validate(); err != nil {
 		return nil, fmt.Errorf("expense: validate bootstrap snapshot: %w", err)
 	}
@@ -454,6 +461,9 @@ func (client *Client) restoreWorkspace(body []byte, source string) error {
 		} else if workspace.ID != client.workspaceRootID {
 			*known.id = ""
 		}
+	}
+	if workspace.ID != client.workspaceRootID {
+		client.workspaceTabs = capture.WorkspaceTabs{}
 	}
 	client.workspaceRootID = workspace.ID
 	client.createButtonID = newReport.ID

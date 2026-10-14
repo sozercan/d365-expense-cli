@@ -32,6 +32,7 @@ type canonicalCLI struct {
 	Create     createCommand  `cmd:"" help:"Create and submit an expense report; use --draft to save without submitting."`
 	Receipt    receiptCommand `cmd:"" help:"Manage receipts on existing Draft reports."`
 	Report     reportCommand  `cmd:"" help:"Manage existing Draft reports."`
+	Expense    expenseCommand `cmd:"" help:"Manage unattached expenses."`
 	Session    sessionCommand `cmd:"" help:"Manage imported Dynamics sessions."`
 	HAR        harCommand     `cmd:"" name:"har" help:"Inspect or capture private HAR files."`
 	VersionCmd versionCommand `cmd:"" name:"version" help:"Print version information."`
@@ -81,6 +82,30 @@ func (command *createCommand) Validate() error {
 
 type receiptCommand struct {
 	Attach receiptAttachCommand `cmd:"" help:"Attach a receipt to an existing captured Draft."`
+	Delete receiptDeleteCommand `cmd:"" help:"Delete unattached receipts with one file name."`
+}
+
+type receiptDeleteCommand struct {
+	profileSource `embed:""`
+	Name          string `name:"name" required:"" help:"Exact receipt file name."`
+	Count         int    `name:"count" required:"" help:"Number of unattached receipts with that name; must match exactly."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type expenseCommand struct {
+	List   expenseListCommand   `cmd:"" help:"List unattached expenses."`
+	Delete expenseDeleteCommand `cmd:"" help:"Delete unattached expenses from one merchant."`
+}
+
+type expenseListCommand struct {
+	profileSource `embed:""`
+}
+
+type expenseDeleteCommand struct {
+	profileSource `embed:""`
+	Merchant      string `name:"merchant" required:"" help:"Exact merchant of the unattached expenses."`
+	Count         int    `name:"count" required:"" help:"Number of unattached expenses from that merchant; must match exactly."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
 
 type receiptAttachCommand struct {
@@ -239,6 +264,9 @@ type legacyRunners struct {
 	submitReport             func([]string, io.Writer, io.Writer) int
 	attachReportReceipt      func([]string, io.Writer, io.Writer) int
 	removeReportReceipts     func([]string, io.Writer, io.Writer) int
+	listExpenses             func([]string, io.Writer, io.Writer) int
+	deleteExpenses           func([]string, io.Writer, io.Writer) int
+	deleteReceipts           func([]string, io.Writer, io.Writer) int
 	sessionImport            func([]string, io.Writer, io.Writer) int
 	sessionImportCDP         func([]string, io.Writer, io.Writer) int
 	sessionList              func([]string, io.Writer, io.Writer) int
@@ -261,6 +289,9 @@ func defaultLegacyRunners() legacyRunners {
 		submitReport:             runSubmitReport,
 		attachReportReceipt:      runAttachReportReceipt,
 		removeReportReceipts:     runRemoveReportReceipts,
+		listExpenses:             runListExpenses,
+		deleteExpenses:           runDeleteExpenses,
+		deleteReceipts:           runDeleteReceipts,
 		sessionImport:            runSessionImport,
 		sessionImportCDP:         runSessionImportCDP,
 		sessionList:              runSessionList,
@@ -417,6 +448,37 @@ func (command *reportRemoveReceiptCommand) Run(rt *commandRuntime) error {
 	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
 	args = append(args, "--receipt", command.Receipt, "--count", strconv.Itoa(command.Count))
 	return invokeLegacy(rt.runners.removeReportReceipts, args, rt)
+}
+
+func workspaceArgs(source profileSource, timeout time.Duration, dryRun bool, extra ...string) []string {
+	args := append(sourceArgs(source), "--timeout", selectedTimeout(timeout, 5*time.Minute).String())
+	if !dryRun {
+		args = append(args, "--execute")
+	}
+	return append(args, extra...)
+}
+
+func (command *expenseListCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.listExpenses, workspaceArgs(command.profileSource, rt.global.Timeout, false), rt)
+}
+
+func (command *expenseDeleteCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.deleteExpenses, workspaceArgs(command.profileSource, rt.global.Timeout, command.DryRun,
+		"--merchant", command.Merchant, "--count", strconv.Itoa(command.Count)), rt)
+}
+
+func (command *receiptDeleteCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.deleteReceipts, workspaceArgs(command.profileSource, rt.global.Timeout, command.DryRun,
+		"--name", command.Name, "--count", strconv.Itoa(command.Count)), rt)
 }
 
 func (command *reportSubmitCommand) Run(rt *commandRuntime) error {

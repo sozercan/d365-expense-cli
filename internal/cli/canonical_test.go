@@ -253,3 +253,31 @@ func TestCanonicalReportCommandsRouteArguments(t *testing.T) {
 		t.Fatalf("itemize without --draft code = %d", code)
 	}
 }
+
+func TestCanonicalWorkspaceItemCommandsRouteArguments(t *testing.T) {
+	t.Parallel()
+	var list, expenses, receipts []string
+	runners := defaultLegacyRunners()
+	runners.listExpenses = func(args []string, _, _ io.Writer) int { list = append([]string(nil), args...); return 0 }
+	runners.deleteExpenses = func(args []string, _, _ io.Writer) int { expenses = append([]string(nil), args...); return 0 }
+	runners.deleteReceipts = func(args []string, _, _ io.Writer) int { receipts = append([]string(nil), args...); return 0 }
+	for _, args := range [][]string{
+		{"expense", "list", "--session", "work"},
+		{"expense", "delete", "--session", "work", "--merchant", "CLI Test Hotel", "--count", "9"},
+		{"receipt", "delete", "--session", "work", "--name", "old", "--count", "2", "--dry-run"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := runCanonicalWithRunners(args, &stdout, &stderr, runners); code != 0 {
+			t.Fatalf("%v: code = %d, stderr=%q", args, code, stderr.String())
+		}
+	}
+	for _, check := range []struct{ got, want []string }{
+		{list, []string{"--session", "work", "--timeout", "5m0s", "--execute"}},
+		{expenses, []string{"--session", "work", "--timeout", "5m0s", "--execute", "--merchant", "CLI Test Hotel", "--count", "9"}},
+		{receipts, []string{"--session", "work", "--timeout", "5m0s", "--name", "old", "--count", "2"}},
+	} {
+		if !reflect.DeepEqual(check.got, check.want) {
+			t.Fatalf("args = %#v, want %#v", check.got, check.want)
+		}
+	}
+}

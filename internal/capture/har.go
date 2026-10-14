@@ -223,13 +223,14 @@ func parseBootstrapHAR(r io.Reader) (*BootstrapProfile, error) {
 		return nil, err
 	}
 	profile := &BootstrapProfile{Session: session, NewReport: newReport}
-	profile.ReportsGrid, profile.ReportLink = extractWorkspaceReportTargets(selected, newReport.RootID)
+	profile.ReportsGrid, profile.ReportLink, profile.WorkspaceTabs = extractWorkspaceReportTargets(selected, newReport.RootID)
 	return profile, nil
 }
 
-// extractWorkspaceReportTargets returns the unique reports grid and report
-// link in the workspace root; each is zero unless exactly one is exposed.
-func extractWorkspaceReportTargets(exchanges []exchange, rootID string) (CommandTarget, CommandTarget) {
+// extractWorkspaceReportTargets returns the unique reports grid, report link,
+// and tab pages in the workspace root; each is zero unless exactly one of each
+// is exposed.
+func extractWorkspaceReportTargets(exchanges []exchange, rootID string) (CommandTarget, CommandTarget, WorkspaceTabs) {
 	catalog := newTargetCatalog()
 	for i := range exchanges {
 		if exchangeSucceeded(&exchanges[i]) {
@@ -243,7 +244,14 @@ func extractWorkspaceReportTargets(exchanges []exchange, rootID string) (Command
 	if linkID, ok := uniqueCatalogTarget(catalog, rootID, reportLinkControl); ok {
 		link = ReportLinkTarget(rootID, linkID)
 	}
-	return grid, link
+	var tabs WorkspaceTabs
+	reports, reportsOK := uniqueCatalogTarget(catalog, rootID, workspaceReportsTab)
+	receipts, receiptsOK := uniqueCatalogTarget(catalog, rootID, workspaceReceiptsTab)
+	expenses, expensesOK := uniqueCatalogTarget(catalog, rootID, workspaceExpensesTab)
+	if reportsOK && receiptsOK && expensesOK {
+		tabs = WorkspaceTabs{Reports: reports, Receipts: receipts, Expenses: expenses}
+	}
+	return grid, link, tabs
 }
 
 func decodeHARExchanges(r io.Reader) ([]exchange, error) {

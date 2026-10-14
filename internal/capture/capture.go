@@ -69,7 +69,29 @@ type BootstrapProfile struct {
 	// only needed to select or open an existing report.
 	ReportsGrid CommandTarget
 	ReportLink  CommandTarget
+	// WorkspaceTabs is optional; it is needed to open the workspace's
+	// Receipts and Expenses tabs.
+	WorkspaceTabs WorkspaceTabs
 }
+
+// WorkspaceTabs are the Expense workspace's tab page control IDs. Dynamics
+// sends a tab's grid and Delete button only the first time the tab opens in a
+// session, so those optional IDs are remembered once seen.
+type WorkspaceTabs struct {
+	Reports        string
+	Receipts       string
+	Expenses       string
+	ReceiptsGrid   string
+	ReceiptsDelete string
+	ExpensesGrid   string
+	ExpensesDelete string
+}
+
+const (
+	workspaceReportsTab  = "ReportsTabPage"
+	workspaceReceiptsTab = "ReceiptsTabPage"
+	workspaceExpensesTab = "ExpenseTabPage"
+)
 
 const (
 	reportsGridCommand = "ChangeSelectedIndex"
@@ -192,7 +214,7 @@ func ParseBootstrapWithNewReport(r io.Reader, newReport CommandTarget) (*Bootstr
 		return nil, err
 	}
 	profile.NewReport = newReport
-	profile.ReportsGrid, profile.ReportLink = extractWorkspaceReportTargets(selected, newReport.RootID)
+	profile.ReportsGrid, profile.ReportLink, profile.WorkspaceTabs = extractWorkspaceReportTargets(selected, newReport.RootID)
 	if err := profile.Validate(); err != nil {
 		return nil, err
 	}
@@ -243,6 +265,14 @@ func (p *BootstrapProfile) Validate() error {
 		}
 		if p.ReportsGrid != ReportsGridTarget(p.NewReport.RootID, p.ReportsGrid.TargetID) {
 			return errors.New("capture bootstrap reports-grid target is not allowlisted")
+		}
+	}
+	if p.WorkspaceTabs != (WorkspaceTabs{}) {
+		tabs := p.WorkspaceTabs
+		for index, id := range []string{tabs.Reports, tabs.Receipts, tabs.Expenses, tabs.ReceiptsGrid, tabs.ReceiptsDelete, tabs.ExpensesGrid, tabs.ExpensesDelete} {
+			if (index < 3 && strings.TrimSpace(id) == "") || len(id) > 4096 || strings.ContainsAny(id, "\x00\r\n") {
+				return errors.New("capture bootstrap workspace tabs are incomplete")
+			}
 		}
 	}
 	if p.ReportLink != (CommandTarget{}) {

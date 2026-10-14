@@ -9,6 +9,7 @@ receipts, submit reports, or save them as Drafts.
 - Save a new report as a Draft with `--draft`.
 - Add expense lines to a new Draft, including itemized hotel stays.
 - List, itemize, submit, or delete an existing Draft report.
+- List and delete unattached expenses and receipts.
 - Attach up to 20 PNG receipts to a new report.
 - Preview a report with `--dry-run` before making changes.
 - Reuse a named authenticated Dynamics session.
@@ -253,7 +254,8 @@ The rows must add up exactly to the selected line's amount; otherwise
 names a receipt by the file name shown on the report's Receipts tab and
 matches the line in Dynamics' Attach to expense list by date, amount, and
 merchant. `report remove-receipt` requires `--count` to equal the number of
-receipts with that name and refuses receipts attached to an expense line. Remove `--dry-run` to run a
+receipts with that name and refuses receipts attached to an expense line;
+removed receipts become unattached receipts in the workspace. Remove `--dry-run` to run a
 command. `report submit` clicks only the report's validated Submit button and
 then refreshes the list to confirm the report left Draft status.
 
@@ -261,6 +263,19 @@ Dynamics behaviors to know:
 
 - Deleting a report keeps its expense lines as unattached expenses.
 - A new report automatically includes every unattached expense.
+
+## Unattached expenses and receipts
+
+```bash
+d365-expense expense list --session work
+d365-expense expense delete --session work --merchant "Old Hotel" --count 2 --dry-run
+d365-expense receipt delete --session work --name old-receipt --count 1 --dry-run
+```
+
+Delete commands match the exact merchant or receipt file name, require
+`--count` to equal the number of matches, verify each deletion with a refresh,
+and return the workspace to its Reports tab. Deleting an unattached expense
+with an attached receipt returns that receipt to the unattached receipts.
 
 ## Sessions
 

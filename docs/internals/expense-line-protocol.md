@@ -149,6 +149,27 @@ and `MatchExpensesButton` (Attach to expense).
 
 The CLI removes one receipt at a time and checks the reloaded list after each.
 
+## Unattached expenses and receipts
+
+`session import` also records the workspace's `ReportsTabPage`,
+`ReceiptsTabPage`, and `ExpenseTabPage` from the initial form load.
+
+1. `ActivateTab` on the tab (throttle group `<root>_WorkspaceTabControl`)
+   lists its rows as `TrvExpTrans_ds` or `DocuValue_ds` records linked by
+   `previous_`/`next_MasterTrackingId`. The first activation in a session
+   also sends `ExpenseTabPageGrid`/`DeleteButtonExpenseTab` or
+   `ReceiptsTabPageGrid`/`DeleteButtonReceiptsTab`; the session remembers them
+   because later activations omit them.
+2. `ChangeSelectedIndex` with mark mode 0 activates and marks one row.
+3. `UpdateLastSelectedControl("ExpTransDate")` or `("Filename")` plus `Click`
+   on the tab's Delete button opens the `SysBoxForm_form` Yes/No confirmation.
+4. `Click` on `Yes` deletes the marked row (or the active row when none is
+   marked). The CLI then refreshes the workspace and requires exactly that row
+   to be gone.
+
+Each command ends with `ActivateTab` on `ReportsTabPage`, because an import
+from a workspace left on another tab cannot find **New expense report**.
+
 ## Delete a Draft
 
 Captured on October 13, 2026 from the workspace Reports grid, up to and
