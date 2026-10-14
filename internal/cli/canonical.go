@@ -104,6 +104,7 @@ type reportCommand struct {
 	Itemize       reportItemizeCommand       `cmd:"" help:"Itemize one expense line of an existing Draft report."`
 	Submit        reportSubmitCommand        `cmd:"" help:"Submit an existing Draft report."`
 	AttachReceipt reportAttachReceiptCommand `cmd:"" name:"attach-receipt" help:"Attach a receipt already on a Draft report to one of its lines."`
+	RemoveReceipt reportRemoveReceiptCommand `cmd:"" name:"remove-receipt" help:"Remove receipts with one file name from a Draft report."`
 	Delete        reportDeleteCommand        `cmd:"" help:"Delete an existing Draft report."`
 }
 
@@ -127,6 +128,15 @@ type reportAttachReceiptCommand struct {
 	Report        string `name:"report" required:"" help:"Draft expense report number."`
 	Line          int    `name:"line" required:"" help:"Line number shown by report show."`
 	Receipt       string `name:"receipt" required:"" help:"Receipt file name as listed on the report's Receipts tab."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportRemoveReceiptCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	Receipt       string `name:"receipt" required:"" help:"Receipt file name as listed on the report's Receipts tab."`
+	Count         int    `name:"count" default:"1" help:"Number of receipts with that name; must match exactly."`
 	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
 
@@ -228,6 +238,7 @@ type legacyRunners struct {
 	itemizeReportLine        func([]string, io.Writer, io.Writer) int
 	submitReport             func([]string, io.Writer, io.Writer) int
 	attachReportReceipt      func([]string, io.Writer, io.Writer) int
+	removeReportReceipts     func([]string, io.Writer, io.Writer) int
 	sessionImport            func([]string, io.Writer, io.Writer) int
 	sessionImportCDP         func([]string, io.Writer, io.Writer) int
 	sessionList              func([]string, io.Writer, io.Writer) int
@@ -249,6 +260,7 @@ func defaultLegacyRunners() legacyRunners {
 		itemizeReportLine:        runItemizeReportLine,
 		submitReport:             runSubmitReport,
 		attachReportReceipt:      runAttachReportReceipt,
+		removeReportReceipts:     runRemoveReportReceipts,
 		sessionImport:            runSessionImport,
 		sessionImportCDP:         runSessionImportCDP,
 		sessionList:              runSessionList,
@@ -393,6 +405,18 @@ func (command *reportAttachReceiptCommand) Run(rt *commandRuntime) error {
 	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 3*time.Minute, command.DryRun)
 	args = append(args, "--line", strconv.Itoa(command.Line), "--receipt", command.Receipt)
 	return invokeLegacy(rt.runners.attachReportReceipt, args, rt)
+}
+
+func (command *reportRemoveReceiptCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
+	args = append(args, "--receipt", command.Receipt, "--count", strconv.Itoa(command.Count))
+	return invokeLegacy(rt.runners.removeReportReceipts, args, rt)
 }
 
 func (command *reportSubmitCommand) Run(rt *commandRuntime) error {

@@ -269,3 +269,34 @@ func runAttachReportReceipt(args []string, stdout, stderr io.Writer) int {
 		return err
 	})
 }
+
+func runRemoveReportReceipts(args []string, stdout, stderr io.Writer) int {
+	const name = "report remove-receipt"
+	report := newReportFlags(name, stderr, 5*time.Minute)
+	receipt := report.flags.String("receipt", "", "receipt file name as listed on the report")
+	count := report.flags.Int("count", 1, "number of receipts with that name to remove")
+	client, code := report.parse(name, args, stderr)
+	if client == nil {
+		return code
+	}
+	if *receipt == "" || *count < 1 {
+		fmt.Fprintf(stderr, "%s requires --receipt and a positive --count\n", name)
+		return 2
+	}
+	request := expense.RemoveReportReceiptsRequest{ReportNumber: *report.reportNumber, Receipt: *receipt, Count: *count}
+	if !*report.execute {
+		printReportPlan(stdout, request.ReportNumber, []string{
+			fmt.Sprintf("open the Draft and require exactly %d receipts named %q, none attached to an expense line", request.Count, request.Receipt),
+			"for each: select it, click Remove, confirm Yes, and verify exactly that receipt is gone",
+			"save and close the Draft",
+		})
+		return 0
+	}
+	return report.run(name, client, stderr, func(ctx context.Context, client *expense.Client) error {
+		removed, err := client.RemoveReportReceipts(ctx, request)
+		if removed != 0 {
+			fmt.Fprintf(stdout, "removed %d receipts named %q from draft %s\n", removed, request.Receipt, request.ReportNumber)
+		}
+		return err
+	})
+}

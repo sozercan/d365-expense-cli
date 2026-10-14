@@ -134,6 +134,21 @@ and `MatchExpensesButton` (Attach to expense).
    the attached one.
 5. `RequestClose` with `[null]` closes the popup, and `SaveAndClose` saves.
 
+## Remove a report receipt
+
+`RemoveButtonReceiptsTab` removes the active receipt when none is marked.
+
+1. `ChangeSelectedIndex` with mark mode 0 on `ReceiptsTabPageGrid` selects the
+   receipt unless it is already active.
+2. `UpdateLastSelectedControl("ImagePreview_Receipts")` plus `Click` on
+   `RemoveButtonReceiptsTab` opens the `SysBoxForm_form` Yes/No confirmation.
+3. `Click` on `Yes` removes it. The response closes the confirmation, lowers
+   `ReceiptCount` by one, and reloads `DocuValue_ds` with file names and the
+   `DocuRef_ds` `getAttachmentStatus_dataMethod`, which is non-empty for
+   receipts attached to an expense line.
+
+The CLI removes one receipt at a time and checks the reloaded list after each.
+
 ## Delete a Draft
 
 Captured on October 13, 2026 from the workspace Reports grid, up to and

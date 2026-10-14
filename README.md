@@ -228,6 +228,10 @@ d365-expense report itemize --draft --session work --report <report-id> \
 d365-expense report attach-receipt --draft --session work --report <report-id> \
   --line 8 --receipt ride-receipt --dry-run
 
+# Remove the 6 receipts named test-receipt from the report
+d365-expense report remove-receipt --draft --session work --report <report-id> \
+  --receipt test-receipt --count 6 --dry-run
+
 # Submit the Draft
 d365-expense report submit --session work --report <report-id> --dry-run
 
@@ -248,7 +252,8 @@ The rows must add up exactly to the selected line's amount; otherwise
 `report itemize` stops before changing anything. `report attach-receipt`
 names a receipt by the file name shown on the report's Receipts tab and
 matches the line in Dynamics' Attach to expense list by date, amount, and
-merchant. Remove `--dry-run` to run a
+merchant. `report remove-receipt` requires `--count` to equal the number of
+receipts with that name and refuses receipts attached to an expense line. Remove `--dry-run` to run a
 command. `report submit` clicks only the report's validated Submit button and
 then refreshes the list to confirm the report left Draft status.
 

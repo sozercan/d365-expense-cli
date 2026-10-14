@@ -168,3 +168,85 @@ func validateRequestPopup(command CommandInteraction, rootID, targetID string, s
 	}
 	return nil
 }
+
+const (
+	ControlRemoveReceiptButton = "RemoveButtonReceiptsTab"
+	DataSourceReceiptRefs      = "DocuRef_ds"
+)
+
+// ReceiptRemoveCommandTargets is the session-scoped allowlist used by
+// ValidateReceiptRemoveCommands.
+type ReceiptRemoveCommandTargets struct {
+	DetailsRootID  string
+	ReceiptsGridID string
+	RemoveButtonID string
+	ConfirmRootID  string
+	ConfirmYesID   string
+}
+
+// BuildRemoveReceiptClickMessage clicks the Receipts tab's Remove button for
+// the active receipt.
+func BuildRemoveReceiptClickMessage(sequence int64, detailsRootID, removeButtonID string) Message {
+	return buildSelectAndClickMessage(sequence, detailsRootID, removeButtonID, SelectedControlImagePreviewReceipts, nil)
+}
+
+// ValidateReceiptRemoveCommands permits only the captured receipt removal
+// shapes: select a receipt, click Remove, or confirm Yes.
+func ValidateReceiptRemoveCommands(envelope Envelope, targets ReceiptRemoveCommandTargets) error {
+	if err := validateForbiddenCommandInvariant(envelope); err != nil {
+		return err
+	}
+	if len(envelope.Messages) != 1 {
+		return unsafe(-1, -1, "", "receipt removal stages contain exactly one message")
+	}
+	message := envelope.Messages[0]
+	if len(message.Interactions) == 2 {
+		commands, err := message.CommandInteractions()
+		if err != nil {
+			return unsafe(0, -1, "", err.Error())
+		}
+		update, click := commands[0], commands[1]
+		if targets.DetailsRootID == "" || targets.RemoveButtonID == "" {
+			return unsafe(0, 1, click.CommandName, "Remove targets are incomplete")
+		}
+		if err := validateCommon(update, CommandUpdateLastSelectedControl, targets.DetailsRootID, targets.DetailsRootID); err != nil {
+			return unsafe(0, 0, update.CommandName, err.Error())
+		}
+		if !update.NoAsyncIncrement || update.Telemetry || update.Throttle || !shouldBlockOmitted(update) ||
+			!oneString(update.PositionalParameters, SelectedControlImagePreviewReceipts) || len(update.ExtraFields) != 0 {
+			return unsafe(0, 0, update.CommandName, "UpdateLastSelectedControl shape does not match the captured receipt removal flow")
+		}
+		if err := validateClick(click, targets.DetailsRootID, targets.RemoveButtonID, true); err != nil {
+			return unsafe(0, 1, click.CommandName, err.Error())
+		}
+		return nil
+	}
+	if len(message.Interactions) != 1 {
+		return unsafe(0, -1, "", "receipt removal stage has an unsupported interaction count")
+	}
+	names, err := topLevelStringFields(message.Interactions[0], "CommandName")
+	if err != nil || len(names) != 1 {
+		return unsafe(0, 0, "", "receipt removal interaction must name one command")
+	}
+	switch names[0] {
+	case CommandChangeSelectedIndex:
+		if targets.DetailsRootID == "" || targets.ReceiptsGridID == "" {
+			return unsafe(0, 0, names[0], "receipt selection targets are incomplete")
+		}
+		return validateChangeSelectedIndex(message, targets.DetailsRootID, targets.ReceiptsGridID, MarkModeActivate)
+	case CommandClick:
+		command, err := ParseCommandInteraction(message.Interactions[0])
+		if err != nil {
+			return unsafe(0, 0, names[0], err.Error())
+		}
+		if targets.ConfirmRootID == "" || targets.ConfirmYesID == "" {
+			return unsafe(0, 0, command.CommandName, "confirmation targets are incomplete")
+		}
+		if err := validateClick(command, targets.ConfirmRootID, targets.ConfirmYesID, true); err != nil {
+			return unsafe(0, 0, command.CommandName, err.Error())
+		}
+		return nil
+	default:
+		return unsafe(0, 0, names[0], "command is not part of the receipt removal flow")
+	}
+}
