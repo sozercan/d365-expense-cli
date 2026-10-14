@@ -139,6 +139,27 @@ func TestCanonicalCreateDryRunOmitsExecute(t *testing.T) {
 	}
 }
 
+func TestCanonicalCreateRoutesApprovers(t *testing.T) {
+	t.Parallel()
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.createReport = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runCanonicalWithRunners([]string{"create", "--draft", "--session", "work", "--purpose", "Offsite 2030",
+		"--interim-approver", "Avery Example", "--interim-approver", "Blake Example", "--final-approver", "Casey Example"}, &stdout, &stderr, runners); code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	want := []string{"--session", "work", "--purpose", "Offsite 2030",
+		"--interim-approver", "Avery Example", "--interim-approver", "Blake Example", "--final-approver", "Casey Example",
+		"--timeout", "1m45s", "--execute"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 func TestCanonicalCreateSubmitsReceiptsByDefault(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -189,5 +210,103 @@ func TestLegacyReplacementPreservesCreateSubmitIntent(t *testing.T) {
 				t.Fatalf("legacyReplacement(%#v) = %q, want %q", test.args, got, test.want)
 			}
 		})
+	}
+}
+
+func TestCanonicalReportDeleteRequiresDraftAndRoutesReport(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	if code := runCanonical([]string{"report", "delete", "--session", "work", "--report", "D0001"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("missing --draft code = %d", code)
+	}
+
+	var got []string
+	runners := defaultLegacyRunners()
+	runners.deleteReport = func(args []string, _, _ io.Writer) int {
+		got = append([]string(nil), args...)
+		return 0
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCanonicalWithRunners([]string{"report", "delete", "--draft", "--session", "work", "--report", "D0001"}, &stdout, &stderr, runners); code != 0 {
+		t.Fatalf("code = %d, stderr=%q", code, stderr.String())
+	}
+	if want := []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--execute"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestCanonicalReportCommandsRouteArguments(t *testing.T) {
+	t.Parallel()
+	rows := writeExpenseFile(t, `[{"subcategory": "Incidentals", "daily_rate": "120.00", "days": 1}]`)
+	var show, itemize, submit, edit, add, attach, remove []string
+	runners := defaultLegacyRunners()
+	runners.showReport = func(args []string, _, _ io.Writer) int { show = append([]string(nil), args...); return 0 }
+	runners.itemizeReportLine = func(args []string, _, _ io.Writer) int { itemize = append([]string(nil), args...); return 0 }
+	runners.submitReport = func(args []string, _, _ io.Writer) int { submit = append([]string(nil), args...); return 0 }
+	runners.editReport = func(args []string, _, _ io.Writer) int { edit = append([]string(nil), args...); return 0 }
+	runners.addReportReceipts = func(args []string, _, _ io.Writer) int { add = append([]string(nil), args...); return 0 }
+	runners.attachReportReceipt = func(args []string, _, _ io.Writer) int { attach = append([]string(nil), args...); return 0 }
+	runners.removeReportReceipts = func(args []string, _, _ io.Writer) int { remove = append([]string(nil), args...); return 0 }
+	for _, args := range [][]string{
+		{"report", "show", "--session", "work", "--report", "D0001"},
+		{"report", "itemize", "--draft", "--session", "work", "--report", "D0001", "--line", "11", "--itemization", rows, "--dry-run"},
+		{"report", "submit", "--session", "work", "--report", "D0001"},
+		{"report", "edit", "--draft", "--session", "work", "--report", "D0001", "--title", "Offsite 2030",
+			"--interim-approver", "Avery Example", "--interim-approver", "Blake Example", "--final-approver", "Casey Example", "--dry-run"},
+		{"report", "add-receipt", "--draft", "--session", "work", "--report", "D0001", "--receipt", rows, "--receipt", rows, "--receipt-note", "rides"},
+		{"report", "attach-receipt", "--draft", "--session", "work", "--report", "D0001", "--line", "8", "--receipt", "ride-receipt"},
+		{"report", "remove-receipt", "--draft", "--session", "work", "--report", "D0001", "--receipt", "old", "--count", "6", "--dry-run"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := runCanonicalWithRunners(args, &stdout, &stderr, runners); code != 0 {
+			t.Fatalf("%v: code = %d, stderr=%q", args, code, stderr.String())
+		}
+	}
+	for _, check := range []struct{ got, want []string }{
+		{show, []string{"--session", "work", "--report", "D0001", "--timeout", "2m0s", "--execute"}},
+		{itemize, []string{"--session", "work", "--report", "D0001", "--timeout", "5m0s", "--line", "11", "--itemization", rows}},
+		{submit, []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--execute"}},
+		{edit, []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--title", "Offsite 2030",
+			"--interim-approver", "Avery Example", "--interim-approver", "Blake Example", "--final-approver", "Casey Example"}},
+		{add, []string{"--session", "work", "--report", "D0001", "--timeout", "4m0s", "--execute", "--file", rows, "--file", rows, "--notes", "rides"}},
+		{attach, []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--execute", "--line", "8", "--receipt", "ride-receipt"}},
+		{remove, []string{"--session", "work", "--report", "D0001", "--timeout", "5m0s", "--receipt", "old", "--count", "6"}},
+	} {
+		if !reflect.DeepEqual(check.got, check.want) {
+			t.Fatalf("args = %#v, want %#v", check.got, check.want)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runCanonical([]string{"report", "itemize", "--session", "work", "--report", "D0001", "--line", "1", "--itemization", rows}, &stdout, &stderr); code != 2 {
+		t.Fatalf("itemize without --draft code = %d", code)
+	}
+}
+
+func TestCanonicalWorkspaceItemCommandsRouteArguments(t *testing.T) {
+	t.Parallel()
+	var list, expenses, receipts []string
+	runners := defaultLegacyRunners()
+	runners.listExpenses = func(args []string, _, _ io.Writer) int { list = append([]string(nil), args...); return 0 }
+	runners.deleteExpenses = func(args []string, _, _ io.Writer) int { expenses = append([]string(nil), args...); return 0 }
+	runners.deleteReceipts = func(args []string, _, _ io.Writer) int { receipts = append([]string(nil), args...); return 0 }
+	for _, args := range [][]string{
+		{"expense", "list", "--session", "work"},
+		{"expense", "delete", "--session", "work", "--merchant", "CLI Test Hotel", "--count", "9"},
+		{"receipt", "delete", "--session", "work", "--name", "old", "--count", "2", "--dry-run"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := runCanonicalWithRunners(args, &stdout, &stderr, runners); code != 0 {
+			t.Fatalf("%v: code = %d, stderr=%q", args, code, stderr.String())
+		}
+	}
+	for _, check := range []struct{ got, want []string }{
+		{list, []string{"--session", "work", "--timeout", "5m0s", "--execute"}},
+		{expenses, []string{"--session", "work", "--timeout", "5m0s", "--execute", "--merchant", "CLI Test Hotel", "--count", "9"}},
+		{receipts, []string{"--session", "work", "--timeout", "5m0s", "--name", "old", "--count", "2"}},
+	} {
+		if !reflect.DeepEqual(check.got, check.want) {
+			t.Fatalf("args = %#v, want %#v", check.got, check.want)
+		}
 	}
 }

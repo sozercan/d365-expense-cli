@@ -70,6 +70,11 @@ type ReceiptClient struct {
 	multipartFieldOrder        []string
 
 	lastReceiptCount int
+
+	// existingDraft means the report was opened from the workspace as a
+	// Draft. Dynamics does not resend an unchanged report record, so its
+	// responses may omit status; a status that is present must still be Draft.
+	existingDraft bool
 }
 
 // NewReceiptClient validates and snapshots a captured receipt session.
@@ -506,7 +511,7 @@ func (client *ReceiptClient) validateDiscoveredState(model dynamics.ReceiptModel
 	if model.ReportNumber != "" && model.ReportNumber != client.reportNumber {
 		return fmt.Errorf("expense: receipt response is for a different report: got %s want %s", model.ReportNumber, client.reportNumber)
 	}
-	if requireStatus && model.Status == "" {
+	if requireStatus && model.Status == "" && !client.existingDraft {
 		return errors.New("expense: receipt response lacks fresh Draft status evidence")
 	}
 	if model.Status != "" && model.Status != "Draft" {

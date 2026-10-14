@@ -7,6 +7,12 @@ receipts, submit reports, or save them as Drafts.
 
 - Create and submit a new expense report.
 - Save a new report as a Draft with `--draft`.
+- Add expense lines to a new Draft, including itemized hotel stays.
+- Set a report's interim and final approvers when creating it, and change an
+  existing Draft's title and approvers.
+- List, itemize, submit, or delete an existing Draft report, and add or
+  attach its receipts.
+- List and delete unattached expenses and receipts.
 - Attach up to 20 PNG receipts to a new report.
 - Preview a report with `--dry-run` before making changes.
 - Reuse a named authenticated Dynamics session.
@@ -120,6 +126,27 @@ d365-expense create \
 
 `--receipt-note` applies the same note to every receipt in the command.
 
+### Set approvers
+
+By default a new report uses your default approvers. Repeat
+`--interim-approver` in approval order to replace the interim approvers, and
+use `--final-approver` to replace the final approver:
+
+```bash
+d365-expense create \
+  --draft \
+  --session work \
+  --purpose "Offsite 2030" \
+  --interim-approver aexample \
+  --interim-approver "Blake Example" \
+  --final-approver "Casey Example"
+```
+
+An interim approver is a display name, as Dynamics shows it, or a user alias
+(no spaces). Use the alias when more than one worker has the same name; the
+command stops and says so. The final approver is a display name. The command
+never changes your default approvers.
+
 ### Save as a Draft
 
 `create` submits the new report. Add `--draft` to save it without submitting:
@@ -131,6 +158,49 @@ d365-expense create \
   --purpose "Customer visit" \
   --receipt flight.png
 ```
+
+### Add expense lines
+
+Describe the lines in a JSON file and pass it with `--expenses`. Lines are
+added in file order before any receipts are attached:
+
+```json
+[
+  {
+    "category": "Hotel",
+    "date": "2026-10-10",
+    "amount": "300.00",
+    "merchant": "Example Hotel",
+    "notes": "Conference hotel",
+    "itemization": [
+      {"subcategory": "Daily Room Rate", "start_date": "2026-10-10", "daily_rate": "125.00", "days": 2},
+      {"subcategory": "Hotel Tax", "daily_rate": "25.00", "days": 2}
+    ]
+  },
+  {"category": "Airline Fees", "date": "2026-10-11", "amount": "35.00", "currency": "USD"}
+]
+```
+
+```bash
+d365-expense create \
+  --draft \
+  --session work \
+  --purpose "Customer visit" \
+  --expenses expenses.json \
+  --receipt folio.png
+```
+
+- `category`, `date` (`YYYY-MM-DD`), and `amount` are required. `currency`,
+  `merchant`, and `notes` are optional; omitted values keep the form defaults.
+- Category and subcategory names must match the names shown in Dynamics.
+- `itemization` is optional. Each row adds `days` daily charges of `daily_rate`
+  starting on `start_date`, which defaults to the expense date. The rows must
+  add up exactly to `amount`.
+- `--expenses` requires `--draft`. Review policy warnings, attach any
+  line-level receipts, and submit the report in Dynamics.
+
+Each field is verified against the value Dynamics reports before the line is
+saved. If anything differs, the command stops and leaves the report as a Draft.
 
 ### Use a HAR directly
 
@@ -163,6 +233,90 @@ d365-expense receipt attach \
 
 Remove `--dry-run` after reviewing the command. This operation attaches the
 receipt and keeps the report as a Draft.
+
+## Work with an existing Draft
+
+These commands find the report in the workspace list, open it, and save and
+close it when done. They only work on Drafts in the first page of the list
+(the most recent reports). Sessions imported before these commands existed must
+be re-imported.
+
+```bash
+# List the approvers, the lines numbered in report order, and the receipts
+d365-expense report show --session work --report <report-id>
+
+# Change the title and approvers; the interim list is replaced in order
+d365-expense report edit --draft --session work --report <report-id> \
+  --title "Offsite 2030" --interim-approver aexample \
+  --interim-approver "Blake Example" --final-approver "Casey Example" --dry-run
+
+# Upload PNG receipts; each is listed by its file name without .png
+d365-expense report add-receipt --draft --session work --report <report-id> \
+  --receipt ride-receipt.png --dry-run
+
+# Itemize line 11 into the rows in folio.json
+d365-expense report itemize --draft --session work --report <report-id> \
+  --line 11 --itemization folio.json --dry-run
+
+# Attach a receipt already on the report to line 8
+d365-expense report attach-receipt --draft --session work --report <report-id> \
+  --line 8 --receipt ride-receipt --dry-run
+
+# Remove the 6 receipts named test-receipt from the report
+d365-expense report remove-receipt --draft --session work --report <report-id> \
+  --receipt test-receipt --count 6 --dry-run
+
+# Submit the Draft
+d365-expense report submit --session work --report <report-id> --dry-run
+
+# Delete the Draft
+d365-expense report delete --draft --session work --report <report-id> --dry-run
+```
+
+`folio.json` holds the same rows as an `itemization` array under `--expenses`:
+
+```json
+[
+  {"subcategory": "Daily Room Rate", "start_date": "2026-10-01", "daily_rate": "189.00", "days": 2},
+  {"subcategory": "Hotel Tax", "daily_rate": "29.14", "days": 2}
+]
+```
+
+`report edit` keeps interim approvers that already match the start of the
+requested list, deletes the rest, adds the missing ones, and checks that the
+report lists exactly the requested approvers. The rows must add up exactly to
+the selected line's amount; otherwise
+`report itemize` stops before changing anything. `report add-receipt` uploads
+through the same checks as `create --receipt`: the report must stay a Draft
+and its receipt count must grow by exactly one per receipt. `report attach-receipt`
+names a receipt by the file name shown on the report's Receipts tab and
+matches the line in Dynamics' Attach to expense list by date, amount, and
+merchant. `report remove-receipt` requires `--count` to equal the number of
+receipts with that name and refuses receipts attached to an expense line;
+removed receipts become unattached receipts in the workspace. Remove `--dry-run` to run a
+command. `report submit` clicks only the report's validated Submit button and
+then refreshes the list to confirm the report left Draft status.
+
+Dynamics behaviors to know:
+
+- Deleting a report keeps its expense lines as unattached expenses.
+- A new report automatically includes every unattached expense and receipt.
+- In Edit expense report, each title or approver change is saved as soon as
+  Dynamics accepts it, even if the dialog is never closed with OK. After a
+  failed `report edit`, check the report with `report show`.
+
+## Unattached expenses and receipts
+
+```bash
+d365-expense expense list --session work
+d365-expense expense delete --session work --merchant "Old Hotel" --count 2 --dry-run
+d365-expense receipt delete --session work --name old-receipt --count 1 --dry-run
+```
+
+Delete commands match the exact merchant or receipt file name, require
+`--count` to equal the number of matches, verify each deletion with a refresh,
+and return the workspace to its Reports tab. Deleting an unattached expense
+with an attached receipt returns that receipt to the unattached receipts.
 
 ## Sessions
 
@@ -225,9 +379,11 @@ See [Troubleshooting](docs/troubleshooting.md) for detailed recovery guidance.
 ## Limitations
 
 - `create` operates on new reports; it cannot reopen and submit an existing
-  Draft by report number.
+  Draft by report number; use the `report` commands for existing Drafts.
 - The CLI does not approve, post, or recall reports.
-- Receipts must be PNG files and are attached at report level.
+- Receipts must be PNG files. They are uploaded at report level; use
+  `report attach-receipt` to attach one to an expense line.
+- Expense lines are supported only on new Drafts created with `--draft`.
 - CDP acquisition currently targets Microsoft Edge.
 - Raw HAR capture requires owner-only file permissions and is not supported on
   Windows when those permissions cannot be enforced.
@@ -260,4 +416,5 @@ data.
 
 - [Dynamics protocol internals](docs/internals/dynamics-protocol.md)
 - [Receipt protocol internals](docs/internals/receipt-protocol.md)
+- [Expense line and deletion protocol internals](docs/internals/expense-line-protocol.md)
 - [Contributing](CONTRIBUTING.md)

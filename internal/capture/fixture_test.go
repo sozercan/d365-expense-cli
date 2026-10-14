@@ -177,6 +177,11 @@ func bootstrapWorkspaceEntry(channel, requestAck, clientSequence, serverSequence
 				"Name": "ExpenseWorkspace_form",
 				"ChildViewModels": []any{
 					map[string]any{"Id": targetID, "Name": "NewExpenseReportReportsTab"},
+					map[string]any{"Id": "reports-grid", "Name": "ReportsTabPageGrid"},
+					map[string]any{"Id": "report-link", "Name": "ExpenseReportNumber"},
+					map[string]any{"Id": "reports-tab", "Name": "ReportsTabPage"},
+					map[string]any{"Id": "receipts-tab", "Name": "ReceiptsTabPage"},
+					map[string]any{"Id": "expenses-tab", "Name": "ExpenseTabPage"},
 				},
 			},
 		}),

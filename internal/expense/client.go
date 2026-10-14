@@ -98,6 +98,9 @@ type Client struct {
 
 	workspaceRootID string
 	createButtonID  string
+	reportsGridID   string
+	reportLinkID    string
+	workspaceTabs   capture.WorkspaceTabs
 }
 
 // New validates and snapshots a captured Dynamics session.
@@ -111,7 +114,7 @@ func New(profile *capture.Profile, options ...Option) (*Client, error) {
 	if err := validateDraftFlow(profile.Draft); err != nil {
 		return nil, err
 	}
-	return newClient(profile.Session, profile.Draft.NewReport, options...)
+	return newClient(profile.Session, profile.Draft.NewReport, capture.CommandTarget{}, capture.CommandTarget{}, options...)
 }
 
 // NewFromBootstrap validates and snapshots a current Expense workspace session
@@ -123,10 +126,15 @@ func NewFromBootstrap(profile *capture.BootstrapProfile, options ...Option) (*Cl
 	if err := profile.Validate(); err != nil {
 		return nil, fmt.Errorf("expense: validate bootstrap profile: %w", err)
 	}
-	return newClient(profile.Session, profile.NewReport, options...)
+	client, err := newClient(profile.Session, profile.NewReport, profile.ReportsGrid, profile.ReportLink, options...)
+	if err != nil {
+		return nil, err
+	}
+	client.workspaceTabs = profile.WorkspaceTabs
+	return client, nil
 }
 
-func newClient(session capture.SessionProfile, newReport capture.CommandTarget, options ...Option) (*Client, error) {
+func newClient(session capture.SessionProfile, newReport, reportsGrid, reportLink capture.CommandTarget, options ...Option) (*Client, error) {
 	endpoint, origin, err := validateEndpoint(session)
 	if err != nil {
 		return nil, err
@@ -166,6 +174,8 @@ func newClient(session capture.SessionProfile, newReport capture.CommandTarget, 
 		nextClientSequence: session.NextClientSequence,
 		workspaceRootID:    newReport.RootID,
 		createButtonID:     newReport.TargetID,
+		reportsGridID:      reportsGrid.TargetID,
+		reportLinkID:       reportLink.TargetID,
 	}, nil
 }
 
@@ -198,6 +208,13 @@ func (client *Client) SnapshotBootstrapProfile() (*capture.BootstrapProfile, err
 			ControlName: dynamics.SelectedControlNewExpenseReportReportsTab,
 		},
 	}
+	if client.reportsGridID != "" {
+		profile.ReportsGrid = capture.ReportsGridTarget(client.workspaceRootID, client.reportsGridID)
+	}
+	if client.reportLinkID != "" {
+		profile.ReportLink = capture.ReportLinkTarget(client.workspaceRootID, client.reportLinkID)
+	}
+	profile.WorkspaceTabs = client.workspaceTabs
 	if err := profile.Validate(); err != nil {
 		return nil, fmt.Errorf("expense: validate bootstrap snapshot: %w", err)
 	}
@@ -218,18 +235,25 @@ func (client *Client) PlanCreateReport(request CreateReportRequest) (CreateRepor
 	if err := validateReportFinalAction(request.FinalAction); err != nil {
 		return CreateReportPlan{}, err
 	}
+	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
+		return CreateReportPlan{}, err
+	}
+	approvers := approverInput(request.InterimApprovers, request.FinalApprover)
+	if err := validateReportHeaderInput(approvers); err != nil {
+		return CreateReportPlan{}, err
+	}
 	finalAction := "save and close draft"
 	if request.FinalAction == ReportFinalActionSubmit {
 		finalAction = "submit the new report using its exact discovered SubmitButton"
 	}
+	actions := []string{"open new expense report", "set purpose and create draft"}
+	actions = append(actions, headerPlanActions(approvers)...)
+	actions = append(actions, expenseLinePlanActions(request.Expenses)...)
 	return CreateReportPlan{
 		Purpose:      request.Purpose,
-		RequestCount: 3,
-		Actions: []string{
-			"open new expense report",
-			"set purpose and create draft",
-			finalAction,
-		},
+		Expenses:     len(request.Expenses),
+		RequestCount: 3 + headerRequestCount(approvers) + expenseLinesRequestCount(request.Expenses),
+		Actions:      append(actions, finalAction),
 	}, nil
 }
 
@@ -244,16 +268,34 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 	if err := validateReportFinalAction(request.FinalAction); err != nil {
 		return ReportResult{}, err
 	}
+	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
+		return ReportResult{}, err
+	}
+	approvers := approverInput(request.InterimApprovers, request.FinalApprover)
+	if err := validateReportHeaderInput(approvers); err != nil {
+		return ReportResult{}, err
+	}
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.nextClientSequence > math.MaxInt64-3 {
+	if client.nextClientSequence > math.MaxInt64-3-headerSequenceHeadroom(approvers)-expenseLinesSequenceHeadroom(request.Expenses) {
 		return ReportResult{}, errors.New("expense: client sequence lacks headroom for report creation")
 	}
 
 	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
 		return ReportResult{}, err
+	}
+	header, err := client.applyApprovers(ctx, draft, approvers)
+	if err != nil {
+		return ReportResult{}, markOperationUncertain(err)
+	}
+	var expenses []ExpenseLineResult
+	if len(request.Expenses) != 0 {
+		expenses, err = client.addExpenseLines(ctx, draft, request.Expenses)
+		if err != nil {
+			return ReportResult{}, markOperationUncertain(err)
+		}
 	}
 
 	if request.FinalAction == ReportFinalActionSubmit {
@@ -265,6 +307,7 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 			Purpose:      request.Purpose,
 			ReportNumber: draft.reportNumber,
 			Status:       status,
+			Header:       header,
 			Submitted:    true,
 		}, nil
 	}
@@ -285,6 +328,8 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 		Purpose:        request.Purpose,
 		ReportNumber:   draft.reportNumber,
 		Status:         draft.status,
+		Header:         header,
+		Expenses:       expenses,
 		SavedAndClosed: true,
 	}, nil
 }
@@ -296,6 +341,9 @@ type openDraftDetails struct {
 	detailsRootID  string
 	saveAndCloseID string
 	submitButton   dynamics.ModelNode
+	// existing is true for a Draft opened from the workspace rather than
+	// created by this operation.
+	existing bool
 }
 
 // createDraftDetails creates a Draft and leaves its details form open. The
@@ -419,6 +467,21 @@ func (client *Client) restoreWorkspace(body []byte, source string) error {
 	newReport, ok := model.FindControlInRoot(dynamics.SelectedControlNewExpenseReportReportsTab, workspace.ID)
 	if !ok || newReport.ID == "" {
 		return fmt.Errorf("expense: %s did not restore the New expense report control", source)
+	}
+	// Grid IDs belong to one workspace instance; forget a stale one rather
+	// than guess when the workspace root changes.
+	for _, known := range []struct {
+		name string
+		id   *string
+	}{{dynamics.ControlReportsGrid, &client.reportsGridID}, {dynamics.ControlReportLink, &client.reportLinkID}} {
+		if node, ok := model.FindControlInRoot(known.name, workspace.ID); ok && node.ID != "" {
+			*known.id = node.ID
+		} else if workspace.ID != client.workspaceRootID {
+			*known.id = ""
+		}
+	}
+	if workspace.ID != client.workspaceRootID {
+		client.workspaceTabs = capture.WorkspaceTabs{}
 	}
 	client.workspaceRootID = workspace.ID
 	client.createButtonID = newReport.ID

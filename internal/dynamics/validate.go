@@ -97,21 +97,28 @@ func validateSetValue(command CommandInteraction, targets DraftCommandTargets) e
 	if targets.DialogRootID == "" || targets.NamePurposeID == "" {
 		return unsafe(0, 0, command.CommandName, "SetValue command targets are incomplete")
 	}
-	if err := validateCommon(command, CommandSetValue, targets.DialogRootID, targets.NamePurposeID); err != nil {
+	if err := validateSetValueShape(command, targets.DialogRootID, targets.NamePurposeID); err != nil {
 		return unsafe(0, 0, command.CommandName, err.Error())
 	}
+	return nil
+}
+
+func validateSetValueShape(command CommandInteraction, rootID, targetID string) error {
+	if err := validateCommon(command, CommandSetValue, rootID, targetID); err != nil {
+		return err
+	}
 	if command.NoAsyncIncrement || !command.Telemetry || command.Throttle || !shouldBlockOmitted(command) || !oneArbitraryString(command.PositionalParameters) {
-		return unsafe(0, 0, command.CommandName, "SetValue shape does not match the observed draft flow")
+		return errors.New("SetValue shape does not match the observed flow")
 	}
 	if len(command.ExtraFields) > 1 {
-		return unsafe(0, 0, command.CommandName, "SetValue contains unapproved fields")
+		return errors.New("SetValue contains unapproved fields")
 	}
 	if complete, ok := command.ExtraFields["complete"]; ok && !bytes.Equal(bytes.TrimSpace(complete), []byte("null")) {
-		return unsafe(0, 0, command.CommandName, "SetValue complete field must be null")
+		return errors.New("SetValue complete field must be null")
 	}
 	for name := range command.ExtraFields {
 		if name != "complete" {
-			return unsafe(0, 0, command.CommandName, "SetValue contains unapproved field "+name)
+			return errors.New("SetValue contains unapproved field " + name)
 		}
 	}
 	return nil

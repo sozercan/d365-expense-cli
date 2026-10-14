@@ -46,6 +46,9 @@ func TestFromBootstrapRoundTripAndDefensiveCopies(t *testing.T) {
 	if err := roundTrip.Validate(); err != nil {
 		t.Fatalf("round-trip Validate() error = %v", err)
 	}
+	if imported.ReportsGrid != nil || roundTrip.ReportsGrid != (capture.CommandTarget{}) {
+		t.Fatalf("a session imported without a reports grid gained one: %#v", imported.ReportsGrid)
+	}
 	if got := roundTrip.Session.RequestHeaders.Get("ms-dyn-aid"); got != "header-secret" {
 		t.Fatalf("round-trip header = %q", got)
 	}
@@ -59,6 +62,27 @@ func TestFromBootstrapRoundTripAndDefensiveCopies(t *testing.T) {
 	}
 	if got := cookieValue(imported.HTTPCookies(), "DynamicsOwinAuth"); got != "cookie-secret" {
 		t.Fatalf("stored cookie changed through result alias: %q", got)
+	}
+}
+
+func TestFromBootstrapRoundTripsReportsGrid(t *testing.T) {
+	profile := validBootstrapProfile()
+	profile.ReportsGrid = capture.ReportsGridTarget("workspace-root", "reports-grid")
+	profile.ReportLink = capture.ReportLinkTarget("workspace-root", "report-link")
+	imported, err := FromBootstrap(profile)
+	if err != nil {
+		t.Fatalf("FromBootstrap() error = %v", err)
+	}
+	roundTrip, err := imported.ToBootstrap()
+	if err != nil {
+		t.Fatalf("ToBootstrap() error = %v", err)
+	}
+	if roundTrip.ReportsGrid != profile.ReportsGrid || roundTrip.ReportLink != profile.ReportLink {
+		t.Fatalf("report targets = %#v, %#v; want %#v, %#v", roundTrip.ReportsGrid, roundTrip.ReportLink, profile.ReportsGrid, profile.ReportLink)
+	}
+	imported.ReportsGrid.RootID = "other-root"
+	if err := imported.Validate(); err == nil {
+		t.Fatal("Validate() accepted a reports grid outside the workspace root")
 	}
 }
 

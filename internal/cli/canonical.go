@@ -14,6 +14,13 @@ import (
 
 var version = "dev"
 
+// defaultDeleteTimeout allows for Dynamics taking close to a minute to delete
+// a report with lines.
+const defaultDeleteTimeout = 3 * time.Minute
+
+// expenseLineTimeout is the default time budget added per expense line.
+const expenseLineTimeout = 90 * time.Second
+
 type canonicalCLI struct {
 	ConfigDir string           `name:"config-dir" type:"path" env:"D365_EXPENSE_CONFIG_DIR" help:"Configuration directory."`
 	Timeout   time.Duration    `name:"timeout" default:"0s" help:"Overall operation timeout; zero uses the command default."`
@@ -24,6 +31,8 @@ type canonicalCLI struct {
 
 	Create     createCommand  `cmd:"" help:"Create and submit an expense report; use --draft to save without submitting."`
 	Receipt    receiptCommand `cmd:"" help:"Manage receipts on existing Draft reports."`
+	Report     reportCommand  `cmd:"" help:"Manage existing Draft reports."`
+	Expense    expenseCommand `cmd:"" help:"Manage unattached expenses."`
 	Session    sessionCommand `cmd:"" help:"Manage imported Dynamics sessions."`
 	HAR        harCommand     `cmd:"" name:"har" help:"Inspect or capture private HAR files."`
 	VersionCmd versionCommand `cmd:"" name:"version" help:"Print version information."`
@@ -45,8 +54,11 @@ type createCommand struct {
 	profileSource      `embed:""`
 	Draft              bool     `name:"draft" help:"Save and close as a Draft instead of submitting."`
 	Purpose            string   `name:"purpose" required:"" help:"Expense report purpose/title."`
+	Expenses           string   `name:"expenses" type:"existingfile" placeholder:"FILE" help:"JSON file of expense lines, optionally itemized, to add; requires --draft."`
 	Receipts           []string `name:"receipt" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in attachment order."`
 	ReceiptNote        string   `name:"receipt-note" help:"Notes applied to every receipt."`
+	InterimApprovers   []string `name:"interim-approver" placeholder:"NAME" help:"Interim approver display name or user alias; repeat in approval order to replace the default list."`
+	FinalApprover      string   `name:"final-approver" placeholder:"NAME" help:"Final approver display name, replacing the default."`
 	ReceiptProtocolHAR string   `name:"receipt-protocol-har" type:"existingfile" hidden:""`
 	DryRun             bool     `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
@@ -64,11 +76,38 @@ func (command *createCommand) Validate() error {
 	if command.ReceiptProtocolHAR != "" && len(command.Receipts) == 0 {
 		return errors.New("--receipt-protocol-har requires at least one --receipt")
 	}
+	if command.Expenses != "" && !command.Draft {
+		return errors.New("--expenses currently requires --draft; review and submit the report in Dynamics")
+	}
 	return nil
 }
 
 type receiptCommand struct {
 	Attach receiptAttachCommand `cmd:"" help:"Attach a receipt to an existing captured Draft."`
+	Delete receiptDeleteCommand `cmd:"" help:"Delete unattached receipts with one file name."`
+}
+
+type receiptDeleteCommand struct {
+	profileSource `embed:""`
+	Name          string `name:"name" required:"" help:"Exact receipt file name."`
+	Count         int    `name:"count" required:"" help:"Number of unattached receipts with that name; must match exactly."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type expenseCommand struct {
+	List   expenseListCommand   `cmd:"" help:"List unattached expenses."`
+	Delete expenseDeleteCommand `cmd:"" help:"Delete unattached expenses from one merchant."`
+}
+
+type expenseListCommand struct {
+	profileSource `embed:""`
+}
+
+type expenseDeleteCommand struct {
+	profileSource `embed:""`
+	Merchant      string `name:"merchant" required:"" help:"Exact merchant of the unattached expenses."`
+	Count         int    `name:"count" required:"" help:"Number of unattached expenses from that merchant; must match exactly."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
 
 type receiptAttachCommand struct {
@@ -85,6 +124,88 @@ func (command *receiptAttachCommand) Validate() error {
 		return errors.New("--draft is required")
 	}
 	return nil
+}
+
+type reportCommand struct {
+	Show          reportShowCommand          `cmd:"" help:"List the expense lines of an existing Draft report."`
+	Itemize       reportItemizeCommand       `cmd:"" help:"Itemize one expense line of an existing Draft report."`
+	Submit        reportSubmitCommand        `cmd:"" help:"Submit an existing Draft report."`
+	Edit          reportEditCommand          `cmd:"" help:"Change an existing Draft report's title or approvers."`
+	AddReceipt    reportAddReceiptCommand    `cmd:"" name:"add-receipt" help:"Upload PNG receipts to an existing Draft report."`
+	AttachReceipt reportAttachReceiptCommand `cmd:"" name:"attach-receipt" help:"Attach a receipt already on a Draft report to one of its lines."`
+	RemoveReceipt reportRemoveReceiptCommand `cmd:"" name:"remove-receipt" help:"Remove receipts with one file name from a Draft report."`
+	Delete        reportDeleteCommand        `cmd:"" help:"Delete an existing Draft report."`
+}
+
+type reportShowCommand struct {
+	profileSource `embed:""`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+}
+
+type reportItemizeCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	Line          int    `name:"line" required:"" help:"Line number shown by report show."`
+	Itemization   string `name:"itemization" required:"" type:"existingfile" placeholder:"FILE" help:"JSON file of itemization rows."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportEditCommand struct {
+	profileSource    `embed:""`
+	Draft            bool     `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report           string   `name:"report" required:"" help:"Draft expense report number."`
+	Title            string   `name:"title" help:"New title/purpose."`
+	InterimApprovers []string `name:"interim-approver" placeholder:"NAME" help:"Interim approver display name or user alias; repeat in approval order to replace the list."`
+	FinalApprover    string   `name:"final-approver" placeholder:"NAME" help:"Final approver display name."`
+	DryRun           bool     `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportAddReceiptCommand struct {
+	profileSource `embed:""`
+	Draft         bool     `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string   `name:"report" required:"" help:"Draft expense report number."`
+	Receipts      []string `name:"receipt" required:"" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in upload order. Dynamics lists it by file name without the extension."`
+	ReceiptNote   string   `name:"receipt-note" help:"Notes applied to every receipt."`
+	DryRun        bool     `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportAttachReceiptCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	Line          int    `name:"line" required:"" help:"Line number shown by report show."`
+	Receipt       string `name:"receipt" required:"" help:"Receipt file name as listed on the report's Receipts tab."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportRemoveReceiptCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	Receipt       string `name:"receipt" required:"" help:"Receipt file name as listed on the report's Receipts tab."`
+	Count         int    `name:"count" default:"1" help:"Number of receipts with that name; must match exactly."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportSubmitCommand struct {
+	profileSource `embed:""`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportDeleteCommand struct {
+	profileSource `embed:""`
+	Draft         bool   `name:"draft" required:"" help:"Required safety acknowledgement: delete only a Draft report."`
+	Report        string `name:"report" required:"" help:"Draft expense report number."`
+	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+func (command *reportDeleteCommand) Validate() error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	return command.profileSource.validate()
 }
 
 type sessionCommand struct {
@@ -160,6 +281,17 @@ type legacyRunners struct {
 	createReport             func([]string, io.Writer, io.Writer) int
 	createReportWithReceipts func([]string, io.Writer, io.Writer) int
 	attachReceipt            func([]string, io.Writer, io.Writer) int
+	deleteReport             func([]string, io.Writer, io.Writer) int
+	showReport               func([]string, io.Writer, io.Writer) int
+	itemizeReportLine        func([]string, io.Writer, io.Writer) int
+	submitReport             func([]string, io.Writer, io.Writer) int
+	editReport               func([]string, io.Writer, io.Writer) int
+	addReportReceipts        func([]string, io.Writer, io.Writer) int
+	attachReportReceipt      func([]string, io.Writer, io.Writer) int
+	removeReportReceipts     func([]string, io.Writer, io.Writer) int
+	listExpenses             func([]string, io.Writer, io.Writer) int
+	deleteExpenses           func([]string, io.Writer, io.Writer) int
+	deleteReceipts           func([]string, io.Writer, io.Writer) int
 	sessionImport            func([]string, io.Writer, io.Writer) int
 	sessionImportCDP         func([]string, io.Writer, io.Writer) int
 	sessionList              func([]string, io.Writer, io.Writer) int
@@ -176,6 +308,17 @@ func defaultLegacyRunners() legacyRunners {
 		createReport:             runCreateDraft,
 		createReportWithReceipts: runCreateDraftWithReceipts,
 		attachReceipt:            runAttachReceipt,
+		deleteReport:             runDeleteReport,
+		showReport:               runShowReport,
+		itemizeReportLine:        runItemizeReportLine,
+		submitReport:             runSubmitReport,
+		editReport:               runEditReport,
+		addReportReceipts:        runAddReportReceipts,
+		attachReportReceipt:      runAttachReportReceipt,
+		removeReportReceipts:     runRemoveReportReceipts,
+		listExpenses:             runListExpenses,
+		deleteExpenses:           runDeleteExpenses,
+		deleteReceipts:           runDeleteReceipts,
 		sessionImport:            runSessionImport,
 		sessionImportCDP:         runSessionImportCDP,
 		sessionList:              runSessionList,
@@ -224,14 +367,27 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	if !command.Draft {
 		args = append(args, "--submit")
 	}
+	args = append(args, approverArgs(command.InterimApprovers, command.FinalApprover)...)
+	// Every expense line adds several sequential round trips, so the default
+	// budget grows with the file; parse errors are reported by the runner.
+	var expenseBudget time.Duration
+	if command.Expenses != "" {
+		args = append(args, "--expenses", command.Expenses)
+		if lines, err := loadExpenseFile(command.Expenses); err == nil {
+			expenseBudget = time.Duration(len(lines)) * expenseLineTimeout
+		}
+	}
+	if len(command.InterimApprovers) != 0 || command.FinalApprover != "" {
+		expenseBudget += time.Minute
+	}
 	if len(command.Receipts) == 0 {
-		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second).String())
+		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second+expenseBudget).String())
 		if !command.DryRun {
 			args = append(args, "--execute")
 		}
 		return invokeLegacy(rt.runners.createReport, args, rt)
 	}
-	args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 120*time.Second).String())
+	args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 120*time.Second+expenseBudget).String())
 	for _, receipt := range command.Receipts {
 		args = append(args, "--file", receipt)
 	}
@@ -260,6 +416,157 @@ func (command *receiptAttachCommand) Run(rt *commandRuntime) error {
 		args = append(args, "--execute")
 	}
 	return invokeLegacy(rt.runners.attachReceipt, args, rt)
+}
+
+func (command *reportDeleteCommand) Run(rt *commandRuntime) error {
+	if err := command.Validate(); err != nil {
+		return err
+	}
+	args := append(sourceArgs(command.profileSource), "--report", command.Report,
+		"--timeout", selectedTimeout(rt.global.Timeout, defaultDeleteTimeout).String())
+	if !command.DryRun {
+		args = append(args, "--execute")
+	}
+	return invokeLegacy(rt.runners.deleteReport, args, rt)
+}
+
+func reportArgs(source profileSource, report string, timeout time.Duration, fallback time.Duration, dryRun bool) []string {
+	args := append(sourceArgs(source), "--report", report, "--timeout", selectedTimeout(timeout, fallback).String())
+	if !dryRun {
+		args = append(args, "--execute")
+	}
+	return args
+}
+
+func (command *reportShowCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.showReport, reportArgs(command.profileSource, command.Report, rt.global.Timeout, 2*time.Minute, false), rt)
+}
+
+func (command *reportItemizeCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
+	args = append(args, "--line", strconv.Itoa(command.Line), "--itemization", command.Itemization)
+	return invokeLegacy(rt.runners.itemizeReportLine, args, rt)
+}
+
+func (command *reportEditCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	if command.Title == "" && len(command.InterimApprovers) == 0 && command.FinalApprover == "" {
+		return errors.New("--title, --interim-approver, or --final-approver is required")
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 3*time.Minute, command.DryRun)
+	if command.Title != "" {
+		args = append(args, "--title", command.Title)
+	}
+	args = append(args, approverArgs(command.InterimApprovers, command.FinalApprover)...)
+	return invokeLegacy(rt.runners.editReport, args, rt)
+}
+
+func approverArgs(interim []string, final string) []string {
+	var args []string
+	for _, name := range interim {
+		args = append(args, "--interim-approver", name)
+	}
+	if final != "" {
+		args = append(args, "--final-approver", final)
+	}
+	return args
+}
+
+func (command *reportAddReceiptCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	if len(command.Receipts) > maxCLIReceipts {
+		return fmt.Errorf("at most %d receipts are supported", maxCLIReceipts)
+	}
+	timeout := 2*time.Minute + time.Duration(len(command.Receipts))*time.Minute
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, timeout, command.DryRun)
+	for _, receipt := range command.Receipts {
+		args = append(args, "--file", receipt)
+	}
+	if command.ReceiptNote != "" {
+		args = append(args, "--notes", command.ReceiptNote)
+	}
+	return invokeLegacy(rt.runners.addReportReceipts, args, rt)
+}
+
+func (command *reportAttachReceiptCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 3*time.Minute, command.DryRun)
+	args = append(args, "--line", strconv.Itoa(command.Line), "--receipt", command.Receipt)
+	return invokeLegacy(rt.runners.attachReportReceipt, args, rt)
+}
+
+func (command *reportRemoveReceiptCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
+	args = append(args, "--receipt", command.Receipt, "--count", strconv.Itoa(command.Count))
+	return invokeLegacy(rt.runners.removeReportReceipts, args, rt)
+}
+
+func workspaceArgs(source profileSource, timeout time.Duration, dryRun bool, extra ...string) []string {
+	args := append(sourceArgs(source), "--timeout", selectedTimeout(timeout, 5*time.Minute).String())
+	if !dryRun {
+		args = append(args, "--execute")
+	}
+	return append(args, extra...)
+}
+
+func (command *expenseListCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.listExpenses, workspaceArgs(command.profileSource, rt.global.Timeout, false), rt)
+}
+
+func (command *expenseDeleteCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.deleteExpenses, workspaceArgs(command.profileSource, rt.global.Timeout, command.DryRun,
+		"--merchant", command.Merchant, "--count", strconv.Itoa(command.Count)), rt)
+}
+
+func (command *receiptDeleteCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.deleteReceipts, workspaceArgs(command.profileSource, rt.global.Timeout, command.DryRun,
+		"--name", command.Name, "--count", strconv.Itoa(command.Count)), rt)
+}
+
+func (command *reportSubmitCommand) Run(rt *commandRuntime) error {
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	return invokeLegacy(rt.runners.submitReport, reportArgs(command.profileSource, command.Report, rt.global.Timeout, 3*time.Minute, command.DryRun), rt)
 }
 
 func (command *sessionImportCommand) Run(rt *commandRuntime) error {

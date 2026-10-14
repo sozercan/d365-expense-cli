@@ -49,6 +49,10 @@ const (
 type DynamicsBootstrapState struct {
 	WorkspaceRootID string
 	NewReportID     string
+	// ReportsGridID and ReportLinkID are empty unless exactly one reports
+	// grid or report-number column is rendered in the same workspace root.
+	ReportsGridID string
+	ReportLinkID  string
 }
 
 // Options controls a CDP-backed HAR capture. Capture opens a new tab in the
@@ -204,13 +208,26 @@ func Capture(parent context.Context, options Options) (*har.Archive, error) {
 		var discovered struct {
 			WorkspaceRootID string `json:"workspaceRootId"`
 			NewReportID     string `json:"newReportId"`
+			ReportsGridID   string `json:"reportsGridId"`
+			ReportLinkID    string `json:"reportLinkId"`
 		}
 		expression := `(() => {
 		  const matches = [...document.querySelectorAll('[data-dyn-controlname="NewExpenseReportReportsTab"]')];
-		  if (matches.length !== 1) return {workspaceRootId:'', newReportId:''};
+		  if (matches.length !== 1) return {workspaceRootId:'', newReportId:'', reportsGridId:'', reportLinkId:''};
+		  const rootId = matches[0].getAttribute('data-dyn-rootserverid') || '';
+		  // Grid cells repeat a column's server ID on every row, so require one
+		  // distinct ID rather than one element.
+		  const uniqueId = (name) => {
+		    const ids = new Set([...document.querySelectorAll('[data-dyn-controlname="' + name + '"]')]
+		      .filter((element) => element.getAttribute('data-dyn-rootserverid') === rootId)
+		      .map((element) => element.getAttribute('data-dyn-serverid') || ''));
+		    return ids.size === 1 ? [...ids][0] : '';
+		  };
 		  return {
-		    workspaceRootId: matches[0].getAttribute('data-dyn-rootserverid') || '',
-		    newReportId: matches[0].getAttribute('data-dyn-serverid') || ''
+		    workspaceRootId: rootId,
+		    newReportId: matches[0].getAttribute('data-dyn-serverid') || '',
+		    reportsGridId: uniqueId('ReportsTabPageGrid'),
+		    reportLinkId: uniqueId('ExpenseReportNumber')
 		  };
 		})()`
 		if err := chromedp.Evaluate(expression, &discovered).Do(ctx); err != nil {
@@ -221,6 +238,8 @@ func Capture(parent context.Context, options Options) (*har.Archive, error) {
 		}
 		options.DynamicsBootstrap.WorkspaceRootID = discovered.WorkspaceRootID
 		options.DynamicsBootstrap.NewReportID = discovered.NewReportID
+		options.DynamicsBootstrap.ReportsGridID = discovered.ReportsGridID
+		options.DynamicsBootstrap.ReportLinkID = discovered.ReportLinkID
 		return nil
 	})
 

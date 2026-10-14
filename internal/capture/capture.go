@@ -64,6 +64,52 @@ type Profile struct {
 type BootstrapProfile struct {
 	Session   SessionProfile
 	NewReport CommandTarget
+	// ReportsGrid and ReportLink are the workspace's expense-report grid and
+	// its report-number hyperlink column. They are optional because they are
+	// only needed to select or open an existing report.
+	ReportsGrid CommandTarget
+	ReportLink  CommandTarget
+	// WorkspaceTabs is optional; it is needed to open the workspace's
+	// Receipts and Expenses tabs.
+	WorkspaceTabs WorkspaceTabs
+}
+
+// WorkspaceTabs are the Expense workspace's tab page control IDs. Dynamics
+// sends a tab's grid and Delete button only the first time the tab opens in a
+// session, so those optional IDs are remembered once seen.
+type WorkspaceTabs struct {
+	Reports        string
+	Receipts       string
+	Expenses       string
+	ReceiptsGrid   string
+	ReceiptsDelete string
+	ExpensesGrid   string
+	ExpensesDelete string
+}
+
+const (
+	workspaceReportsTab  = "ReportsTabPage"
+	workspaceReceiptsTab = "ReceiptsTabPage"
+	workspaceExpensesTab = "ExpenseTabPage"
+)
+
+const (
+	reportsGridCommand = "ChangeSelectedIndex"
+	reportsGridControl = "ReportsTabPageGrid"
+	reportLinkCommand  = "ExecuteHyperlink"
+	reportLinkControl  = "ExpenseReportNumber"
+)
+
+// ReportLinkTarget returns the allowlisted report-number hyperlink target for
+// a workspace root and column control ID.
+func ReportLinkTarget(rootID, linkID string) CommandTarget {
+	return CommandTarget{CommandName: reportLinkCommand, RootID: rootID, TargetID: linkID, ControlName: reportLinkControl}
+}
+
+// ReportsGridTarget returns the allowlisted reports-grid target for a
+// workspace root and grid control ID.
+func ReportsGridTarget(rootID, gridID string) CommandTarget {
+	return CommandTarget{CommandName: reportsGridCommand, RootID: rootID, TargetID: gridID, ControlName: reportsGridControl}
 }
 
 // SessionProfile contains the HTTP and ReliableCommunicationManager state
@@ -163,11 +209,12 @@ func ParseBootstrap(r io.Reader) (*BootstrapProfile, error) {
 // control target. This is used by trusted local CDP acquisition when the
 // workspace model is already rendered but not repeated in captured responses.
 func ParseBootstrapWithNewReport(r io.Reader, newReport CommandTarget) (*BootstrapProfile, error) {
-	profile, err := parseBootstrapSessionHAR(r)
+	profile, selected, err := parseBootstrapSessionHAR(r)
 	if err != nil {
 		return nil, err
 	}
 	profile.NewReport = newReport
+	profile.ReportsGrid, profile.ReportLink, profile.WorkspaceTabs = extractWorkspaceReportTargets(selected, newReport.RootID)
 	if err := profile.Validate(); err != nil {
 		return nil, err
 	}
@@ -211,6 +258,30 @@ func (p *BootstrapProfile) Validate() error {
 	}
 	if p.NewReport.CommandName != "Click" || p.NewReport.ControlName != "NewExpenseReportReportsTab" {
 		return errors.New("capture bootstrap new-report target is not allowlisted")
+	}
+	if p.ReportsGrid != (CommandTarget{}) {
+		if err := validateTarget("reports-grid", p.ReportsGrid); err != nil {
+			return err
+		}
+		if p.ReportsGrid != ReportsGridTarget(p.NewReport.RootID, p.ReportsGrid.TargetID) {
+			return errors.New("capture bootstrap reports-grid target is not allowlisted")
+		}
+	}
+	if p.WorkspaceTabs != (WorkspaceTabs{}) {
+		tabs := p.WorkspaceTabs
+		for index, id := range []string{tabs.Reports, tabs.Receipts, tabs.Expenses, tabs.ReceiptsGrid, tabs.ReceiptsDelete, tabs.ExpensesGrid, tabs.ExpensesDelete} {
+			if (index < 3 && strings.TrimSpace(id) == "") || len(id) > 4096 || strings.ContainsAny(id, "\x00\r\n") {
+				return errors.New("capture bootstrap workspace tabs are incomplete")
+			}
+		}
+	}
+	if p.ReportLink != (CommandTarget{}) {
+		if err := validateTarget("report-link", p.ReportLink); err != nil {
+			return err
+		}
+		if p.ReportLink != ReportLinkTarget(p.NewReport.RootID, p.ReportLink.TargetID) {
+			return errors.New("capture bootstrap report-link target is not allowlisted")
+		}
 	}
 	return nil
 }
