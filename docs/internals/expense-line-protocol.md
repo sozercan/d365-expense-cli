@@ -114,6 +114,41 @@ form's `MainGrid` makes it active; the card's Actions menu then targets it.
 requires the workspace to be restored, and refreshes the list to confirm the
 report's `ApprovalStatus_field` is no longer `1`.
 
+## Edit the report header
+
+The details form's `MoreActions` menu (Click, null parameters) returns its
+`EditExpenseReport` item, and clicking that (empty parameters) opens
+`ExpenseEditExpenseReport_form`. Its `TrvExpTable_ds` record carries the title
+(`Txt2_field`) and `interimApprovers_dataMethod`, the interim approver names
+joined with ", ". The final approver's name is in a generated `DatasourceN_ds`
+record (N differs per form) that shares the report record's tracking ID.
+
+- **Title**: `SetValue` on `NamePurpose`.
+- **Final approver**: `SetValue` on `Expense_FinalApprover_DirPerson_FK_Name`,
+  then `ResolveChanges` on the `Expense_FinalApprover` reference group. A name
+  that matches more than one worker opens `HcmWorkerLookUp_form` instead.
+- **Interim approvers**: `Expense_SelectInterimApprovers` (Click, empty
+  parameters) opens `TrvInterimApproversDialog_form` twice in one response; the
+  browser works in the newer copy and closes both with `OKButton`, newest
+  first. Its `ApproverGrid` lists `TrvInterimApprover_ds` rows with
+  `UserAlias_field`; each row's name is in a `DatasourceN_ds` record with the
+  row's tracking ID.
+  - `NewButton` (with `UpdateLastSelectedControl("NewButton")`) inserts an
+    empty row after the active one. Set its worker by name (`SetValue` plus
+    `ResolveChanges`, as for the final approver) or by `SetValue` on the
+    `UserAlias` input, which resolves the worker directly.
+  - `DeleteButton` (with `UpdateLastSelectedControl("UserAlias")`) deletes the
+    active row. A saved row first asks for `SysBoxForm_form` Yes/No. The
+    response reloads the list with new tracking IDs, except that deleting the
+    only row sends delete-only splices naming its tracking ID and an active
+    row of `0`.
+  - A report with no interim approvers opens the dialog with one blank,
+    unsaved row, which takes the first approver.
+  - Rows are saved as soon as they resolve. After the dialog's OK, the edit
+    dialog re-reads its report record under a new tracking ID.
+- `OK` closes the edit dialog. The `Set as default` buttons change the user's
+  defaults and are never sent.
+
 ## Add receipts to an existing Draft
 
 `report add-receipt` opens the Draft, activates `ReceiptsTabPage`, and uses the

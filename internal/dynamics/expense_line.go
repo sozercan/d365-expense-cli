@@ -99,11 +99,17 @@ func BuildNewItemizationRowMessage(sequence int64, itemizeRootID, newButtonID st
 // BuildSubcategoryMessages sets an itemization subcategory by name and then
 // resolves the reference group, as two consecutive messages.
 func BuildSubcategoryMessages(sequence int64, itemizeRootID, subcategoryID, subcategoryNameID, name string) []Message {
-	resolve := baseCommand(CommandResolveChanges, itemizeRootID, subcategoryID)
+	return BuildReferenceNameMessages(sequence, itemizeRootID, subcategoryID, subcategoryNameID, name)
+}
+
+// BuildReferenceNameMessages sets a reference group's name field and then
+// resolves the group, as two consecutive messages.
+func BuildReferenceNameMessages(sequence int64, rootID, groupID, nameID, name string) []Message {
+	resolve := baseCommand(CommandResolveChanges, rootID, groupID)
 	resolve.Telemetry = true
 	resolve.ExtraFields = map[string]json.RawMessage{"complete": json.RawMessage("null")}
 	return []Message{
-		BuildSetValueMessage(sequence, itemizeRootID, subcategoryNameID, name, "", ""),
+		BuildSetValueMessage(sequence, rootID, nameID, name, "", ""),
 		commandMessage(sequence+1, resolve),
 	}
 }

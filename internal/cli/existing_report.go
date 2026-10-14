@@ -155,6 +155,7 @@ func runShowReport(args []string, stdout, stderr io.Writer) int {
 			return err
 		}
 		fmt.Fprintf(stdout, "report %s: purpose=%q status=%s lines=%d\n", details.ReportNumber, details.Purpose, details.Status, len(details.Lines))
+		printReportHeader(stdout, &expense.ReportHeader{InterimApprovers: details.InterimApprovers, FinalApprover: details.FinalApprover})
 		for _, line := range details.Lines {
 			receipts := "no"
 			if line.Receipts {

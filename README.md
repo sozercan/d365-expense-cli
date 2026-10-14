@@ -8,6 +8,8 @@ receipts, submit reports, or save them as Drafts.
 - Create and submit a new expense report.
 - Save a new report as a Draft with `--draft`.
 - Add expense lines to a new Draft, including itemized hotel stays.
+- Set a report's interim and final approvers when creating it, and change an
+  existing Draft's title and approvers.
 - List, itemize, submit, or delete an existing Draft report, and add or
   attach its receipts.
 - List and delete unattached expenses and receipts.
@@ -124,6 +126,27 @@ d365-expense create \
 
 `--receipt-note` applies the same note to every receipt in the command.
 
+### Set approvers
+
+By default a new report uses your default approvers. Repeat
+`--interim-approver` in approval order to replace the interim approvers, and
+use `--final-approver` to replace the final approver:
+
+```bash
+d365-expense create \
+  --draft \
+  --session work \
+  --purpose "Offsite 2030" \
+  --interim-approver aexample \
+  --interim-approver "Blake Example" \
+  --final-approver "Casey Example"
+```
+
+An interim approver is a display name, as Dynamics shows it, or a user alias
+(no spaces). Use the alias when more than one worker has the same name; the
+command stops and says so. The final approver is a display name. The command
+never changes your default approvers.
+
 ### Save as a Draft
 
 `create` submits the new report. Add `--draft` to save it without submitting:
@@ -219,8 +242,13 @@ close it when done. They only work on Drafts in the first page of the list
 be re-imported.
 
 ```bash
-# List the lines, numbered in report order, and the report's receipts
+# List the approvers, the lines numbered in report order, and the receipts
 d365-expense report show --session work --report <report-id>
+
+# Change the title and approvers; the interim list is replaced in order
+d365-expense report edit --draft --session work --report <report-id> \
+  --title "Offsite 2030" --interim-approver aexample \
+  --interim-approver "Blake Example" --final-approver "Casey Example" --dry-run
 
 # Upload PNG receipts; each is listed by its file name without .png
 d365-expense report add-receipt --draft --session work --report <report-id> \
@@ -254,7 +282,10 @@ d365-expense report delete --draft --session work --report <report-id> --dry-run
 ]
 ```
 
-The rows must add up exactly to the selected line's amount; otherwise
+`report edit` keeps interim approvers that already match the start of the
+requested list, deletes the rest, adds the missing ones, and checks that the
+report lists exactly the requested approvers. The rows must add up exactly to
+the selected line's amount; otherwise
 `report itemize` stops before changing anything. `report add-receipt` uploads
 through the same checks as `create --receipt`: the report must stay a Draft
 and its receipt count must grow by exactly one per receipt. `report attach-receipt`
@@ -269,7 +300,10 @@ then refreshes the list to confirm the report left Draft status.
 Dynamics behaviors to know:
 
 - Deleting a report keeps its expense lines as unattached expenses.
-- A new report automatically includes every unattached expense.
+- A new report automatically includes every unattached expense and receipt.
+- In Edit expense report, each title or approver change is saved as soon as
+  Dynamics accepts it, even if the dialog is never closed with OK. After a
+  failed `report edit`, check the report with `report show`.
 
 ## Unattached expenses and receipts
 

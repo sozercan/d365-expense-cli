@@ -40,11 +40,13 @@ type ReportReceipt struct {
 
 // ReportDetails contains only non-secret data from an existing Draft.
 type ReportDetails struct {
-	ReportNumber string
-	Purpose      string
-	Status       string
-	Lines        []ReportLine
-	Receipts     []ReportReceipt
+	ReportNumber     string
+	Purpose          string
+	Status           string
+	InterimApprovers []string
+	FinalApprover    string
+	Lines            []ReportLine
+	Receipts         []ReportReceipt
 }
 
 // ItemizeReportLineRequest itemizes one existing line of a Draft. Line is the
@@ -74,6 +76,12 @@ func (client *Client) ShowDraftReport(ctx context.Context, reportNumber string) 
 	if err != nil {
 		return ReportDetails{}, err
 	}
+	// Approvers are informational here, so a missing report record leaves
+	// them blank rather than failing the listing.
+	header := headerState{rootID: draft.detailsRootID}
+	if err := header.observe(draft.responseBody, false); err != nil {
+		return ReportDetails{}, err
+	}
 	tab, err := client.readReceiptsTab(ctx, draft)
 	if err != nil {
 		return ReportDetails{}, err
@@ -81,7 +89,13 @@ func (client *Client) ShowDraftReport(ctx context.Context, reportNumber string) 
 	if err := client.saveAndCloseOpenDraft(ctx, draft); err != nil {
 		return ReportDetails{}, err
 	}
-	details = ReportDetails{ReportNumber: reportNumber, Purpose: purpose, Status: draft.status}
+	details = ReportDetails{
+		ReportNumber:     reportNumber,
+		Purpose:          purpose,
+		Status:           draft.status,
+		InterimApprovers: header.header().InterimApprovers,
+		FinalApprover:    header.header().FinalApprover,
+	}
 	for _, line := range lines {
 		details.Lines = append(details.Lines, line.ReportLine)
 	}
@@ -397,9 +411,6 @@ func reportLines(body []byte, detailsRootID string) ([]reportLine, error) {
 	rows, err := recordsByTracking(body, dynamics.DataSourceExpenseLines, detailsRootID)
 	if err != nil {
 		return nil, err
-	}
-	if len(ids) == 0 {
-		return nil, errors.New("expense: the opened report has no expense lines")
 	}
 	lines := make([]reportLine, 0, len(ids))
 	for index, id := range ids {

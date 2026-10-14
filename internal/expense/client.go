@@ -238,16 +238,21 @@ func (client *Client) PlanCreateReport(request CreateReportRequest) (CreateRepor
 	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
 		return CreateReportPlan{}, err
 	}
+	approvers := approverInput(request.InterimApprovers, request.FinalApprover)
+	if err := validateReportHeaderInput(approvers); err != nil {
+		return CreateReportPlan{}, err
+	}
 	finalAction := "save and close draft"
 	if request.FinalAction == ReportFinalActionSubmit {
 		finalAction = "submit the new report using its exact discovered SubmitButton"
 	}
 	actions := []string{"open new expense report", "set purpose and create draft"}
+	actions = append(actions, headerPlanActions(approvers)...)
 	actions = append(actions, expenseLinePlanActions(request.Expenses)...)
 	return CreateReportPlan{
 		Purpose:      request.Purpose,
 		Expenses:     len(request.Expenses),
-		RequestCount: 3 + expenseLinesRequestCount(request.Expenses),
+		RequestCount: 3 + headerRequestCount(approvers) + expenseLinesRequestCount(request.Expenses),
 		Actions:      append(actions, finalAction),
 	}, nil
 }
@@ -266,16 +271,24 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
 		return ReportResult{}, err
 	}
+	approvers := approverInput(request.InterimApprovers, request.FinalApprover)
+	if err := validateReportHeaderInput(approvers); err != nil {
+		return ReportResult{}, err
+	}
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.nextClientSequence > math.MaxInt64-3-expenseLinesSequenceHeadroom(request.Expenses) {
+	if client.nextClientSequence > math.MaxInt64-3-headerSequenceHeadroom(approvers)-expenseLinesSequenceHeadroom(request.Expenses) {
 		return ReportResult{}, errors.New("expense: client sequence lacks headroom for report creation")
 	}
 
 	draft, err := client.createDraftDetails(ctx, request.Purpose)
 	if err != nil {
 		return ReportResult{}, err
+	}
+	header, err := client.applyApprovers(ctx, draft, approvers)
+	if err != nil {
+		return ReportResult{}, markOperationUncertain(err)
 	}
 	var expenses []ExpenseLineResult
 	if len(request.Expenses) != 0 {
@@ -294,6 +307,7 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 			Purpose:      request.Purpose,
 			ReportNumber: draft.reportNumber,
 			Status:       status,
+			Header:       header,
 			Submitted:    true,
 		}, nil
 	}
@@ -314,6 +328,7 @@ func (client *Client) CreateReport(ctx context.Context, request CreateReportRequ
 		Purpose:        request.Purpose,
 		ReportNumber:   draft.reportNumber,
 		Status:         draft.status,
+		Header:         header,
 		Expenses:       expenses,
 		SavedAndClosed: true,
 	}, nil

@@ -30,6 +30,7 @@ func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithRecei
 	if err := validateCreateReportWithReceiptsRequest(request); err != nil {
 		return CreateReportWithReceiptsPlan{}, err
 	}
+	approvers := approverInput(request.InterimApprovers, request.FinalApprover)
 	requestCount, err := createReportWithReceiptsRequestCount(len(request.Receipts))
 	if err != nil {
 		return CreateReportWithReceiptsPlan{}, err
@@ -53,12 +54,13 @@ func (client *Client) PlanCreateReportWithReceipts(request CreateReportWithRecei
 		"open new expense report",
 		"set purpose and create Draft while leaving its details form open",
 	}
+	actions = append(actions, headerPlanActions(approvers)...)
 	actions = append(actions, expenseLinePlanActions(request.Expenses)...)
 	return CreateReportWithReceiptsPlan{
 		Purpose:      request.Purpose,
 		Expenses:     len(request.Expenses),
 		Receipts:     receipts,
-		RequestCount: requestCount + expenseLinesRequestCount(request.Expenses),
+		RequestCount: requestCount + headerRequestCount(approvers) + expenseLinesRequestCount(request.Expenses),
 		Actions: append(actions,
 			"activate the dynamically discovered Receipts tab once",
 			"discover the tab response's New receipt control",
@@ -94,7 +96,8 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 	if err != nil {
 		return CreateReportWithReceiptsResult{}, err
 	}
-	sequenceHeadroom += expenseLinesSequenceHeadroom(request.Expenses)
+	approvers := approverInput(request.InterimApprovers, request.FinalApprover)
+	sequenceHeadroom += headerSequenceHeadroom(approvers) + expenseLinesSequenceHeadroom(request.Expenses)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -111,6 +114,10 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 		if err := dynamics.ValidateSubmitButton(draft.submitButton, draft.detailsRootID); err != nil {
 			return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: submit control is unavailable or unsupported: %w", err)
 		}
+	}
+	header, err := client.applyApprovers(ctx, draft, approvers)
+	if err != nil {
+		return CreateReportWithReceiptsResult{}, err
 	}
 	var expenses []ExpenseLineResult
 	if len(request.Expenses) != 0 {
@@ -153,6 +160,7 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 		Purpose:            request.Purpose,
 		ReportNumber:       draft.reportNumber,
 		Status:             status,
+		Header:             header,
 		Expenses:           expenses,
 		ReceiptCountBefore: beforeReceiptCount,
 		ReceiptCountAfter:  beforeReceiptCount + len(request.Receipts),
@@ -321,6 +329,9 @@ func validateCreateReportWithReceiptsRequest(request CreateReportWithReceiptsReq
 		return err
 	}
 	if err := validateExpenseLines(request.Expenses, request.FinalAction); err != nil {
+		return err
+	}
+	if err := validateReportHeaderInput(approverInput(request.InterimApprovers, request.FinalApprover)); err != nil {
 		return err
 	}
 	for index, receipt := range request.Receipts {

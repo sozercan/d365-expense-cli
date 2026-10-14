@@ -16,9 +16,14 @@ const (
 // CreateReportRequest describes a report creation operation with an explicit
 // final action.
 type CreateReportRequest struct {
-	Purpose     string
-	Expenses    []ExpenseLineInput
-	FinalAction ReportFinalAction
+	Purpose  string
+	Expenses []ExpenseLineInput
+	// InterimApprovers, when non-nil, replaces the default interim approvers
+	// with this ordered list of display names. FinalApprover, when set,
+	// replaces the default final approver.
+	InterimApprovers []string
+	FinalApprover    string
+	FinalAction      ReportFinalAction
 }
 
 // CreateReportPlan is a credential-free description of a report creation
@@ -33,9 +38,12 @@ type CreateReportPlan struct {
 // ReportResult contains only non-secret outcome data from creating an expense
 // report.
 type ReportResult struct {
-	Purpose        string
-	ReportNumber   string
-	Status         string
+	Purpose      string
+	ReportNumber string
+	Status       string
+	// Header is the header after approver changes, or nil when none were
+	// requested.
+	Header         *ReportHeader
 	Expenses       []ExpenseLineResult
 	SavedAndClosed bool
 	Submitted      bool

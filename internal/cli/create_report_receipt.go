@@ -49,6 +49,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 	notes := flags.String("notes", "", "optional notes applied to every receipt")
 	submit := flags.Bool("submit", false, "submit the newly created report after attaching every receipt")
 	expensesPath := flags.String("expenses", "", "JSON file of expense lines to add before attaching receipts")
+	approvers := newApproverFlags(flags)
 	execute := flags.Bool("execute", false, "create the report and perform its requested final action")
 	timeout := flags.Duration("timeout", 120*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
@@ -118,11 +119,13 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 		finalAction = expense.ReportFinalActionSubmit
 	}
 	request := expense.CreateReportWithReceiptsRequest{
-		Purpose:        *purpose,
-		Expenses:       expenses,
-		Receipts:       receipts,
-		UploadContract: contract,
-		FinalAction:    finalAction,
+		Purpose:          *purpose,
+		Expenses:         expenses,
+		InterimApprovers: approvers.list(),
+		FinalApprover:    *approvers.final,
+		Receipts:         receipts,
+		UploadContract:   contract,
+		FinalAction:      finalAction,
 	}
 	plan, err := client.PlanCreateReportWithReceipts(request)
 	if err != nil {
@@ -180,6 +183,7 @@ func runCreateReportWithReceiptsCommand(commandName string, args []string, stdou
 			result.ReportNumber, result.Purpose, result.Status, len(result.Receipts),
 			result.ReceiptCountBefore, result.ReceiptCountAfter, result.SavedAndClosed)
 	}
+	printReportHeader(stdout, result.Header)
 	printExpenseResults(stdout, result.Expenses)
 	for index, attached := range result.Receipts {
 		fmt.Fprintf(stdout, "- attached %d: %q (%d bytes), cumulative-receipt-count=%d\n",

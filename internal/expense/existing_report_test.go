@@ -35,7 +35,11 @@ func openSteps(lines ...map[string]any) []scriptedStep {
 				"Id": "details", "Name": dynamics.FormExpenseReportDetails, "TypeName": "Form",
 				"ChildModelCollections": map[string]any{
 					"TrvExpTable_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{"Properties": map[string]any{
-						"dataSourceName_internal": "TrvExpTable_ds", "ExpNumber_field": "ER-0002", "expenseReportStatus_dataMethod": "Draft",
+						"dataSourceName_internal": "TrvExpTable_ds", "MasterTrackingId": "149", "ExpNumber_field": "ER-0002",
+						"expenseReportStatus_dataMethod": "Draft", "interimApprovers_dataMethod": "Avery Example, Blake Example",
+					}}}}},
+					"Datasource4_ds": map[string]any{"Items": []any{map[string]any{"Item": map[string]any{"Properties": map[string]any{
+						"dataSourceName_internal": "Datasource4_ds", "MasterTrackingId": "149", "Name_field": "Casey Example",
 					}}}}},
 					dynamics.DataSourceExpenseLines: map[string]any{
 						"Name": dynamics.DataSourceExpenseLines, "IsLastPage": true, "ActiveMasterTrackingId": lines[0]["MasterTrackingId"], "Items": items,
@@ -78,10 +82,11 @@ func TestShowDraftReportActivatesOpensListsAndCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ShowDraftReport() error = %v", err)
 	}
-	want := expense.ReportDetails{ReportNumber: "ER-0002", Purpose: "Purpose ER-0002", Status: "Draft", Lines: []expense.ReportLine{
-		{Number: 1, Date: "2026-09-29", Category: "Parking", Amount: "3.00 USD", Merchant: "EXAMPLE TRANSIT"},
-		{Number: 2, Date: "2026-10-03", Category: "Hotel", Amount: "120.00 USD", Merchant: "EXAMPLE HOTEL"},
-	}, Receipts: []expense.ReportReceipt{{Name: "hotel-folio", Attached: true}, {Name: "ride-receipt-2"}}}
+	want := expense.ReportDetails{ReportNumber: "ER-0002", Purpose: "Purpose ER-0002", Status: "Draft",
+		InterimApprovers: []string{"Avery Example", "Blake Example"}, FinalApprover: "Casey Example", Lines: []expense.ReportLine{
+			{Number: 1, Date: "2026-09-29", Category: "Parking", Amount: "3.00 USD", Merchant: "EXAMPLE TRANSIT"},
+			{Number: 2, Date: "2026-10-03", Category: "Hotel", Amount: "120.00 USD", Merchant: "EXAMPLE HOTEL"},
+		}, Receipts: []expense.ReportReceipt{{Name: "hotel-folio", Attached: true}, {Name: "ride-receipt-2"}}}
 	if !reflect.DeepEqual(details, want) {
 		t.Fatalf("ShowDraftReport() = %#v, want %#v", details, want)
 	}

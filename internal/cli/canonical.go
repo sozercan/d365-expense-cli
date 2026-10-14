@@ -57,6 +57,8 @@ type createCommand struct {
 	Expenses           string   `name:"expenses" type:"existingfile" placeholder:"FILE" help:"JSON file of expense lines, optionally itemized, to add; requires --draft."`
 	Receipts           []string `name:"receipt" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in attachment order."`
 	ReceiptNote        string   `name:"receipt-note" help:"Notes applied to every receipt."`
+	InterimApprovers   []string `name:"interim-approver" placeholder:"NAME" help:"Interim approver display name or user alias; repeat in approval order to replace the default list."`
+	FinalApprover      string   `name:"final-approver" placeholder:"NAME" help:"Final approver display name, replacing the default."`
 	ReceiptProtocolHAR string   `name:"receipt-protocol-har" type:"existingfile" hidden:""`
 	DryRun             bool     `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
@@ -128,6 +130,7 @@ type reportCommand struct {
 	Show          reportShowCommand          `cmd:"" help:"List the expense lines of an existing Draft report."`
 	Itemize       reportItemizeCommand       `cmd:"" help:"Itemize one expense line of an existing Draft report."`
 	Submit        reportSubmitCommand        `cmd:"" help:"Submit an existing Draft report."`
+	Edit          reportEditCommand          `cmd:"" help:"Change an existing Draft report's title or approvers."`
 	AddReceipt    reportAddReceiptCommand    `cmd:"" name:"add-receipt" help:"Upload PNG receipts to an existing Draft report."`
 	AttachReceipt reportAttachReceiptCommand `cmd:"" name:"attach-receipt" help:"Attach a receipt already on a Draft report to one of its lines."`
 	RemoveReceipt reportRemoveReceiptCommand `cmd:"" name:"remove-receipt" help:"Remove receipts with one file name from a Draft report."`
@@ -146,6 +149,16 @@ type reportItemizeCommand struct {
 	Line          int    `name:"line" required:"" help:"Line number shown by report show."`
 	Itemization   string `name:"itemization" required:"" type:"existingfile" placeholder:"FILE" help:"JSON file of itemization rows."`
 	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportEditCommand struct {
+	profileSource    `embed:""`
+	Draft            bool     `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report           string   `name:"report" required:"" help:"Draft expense report number."`
+	Title            string   `name:"title" help:"New title/purpose."`
+	InterimApprovers []string `name:"interim-approver" placeholder:"NAME" help:"Interim approver display name or user alias; repeat in approval order to replace the list."`
+	FinalApprover    string   `name:"final-approver" placeholder:"NAME" help:"Final approver display name."`
+	DryRun           bool     `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
 
 type reportAddReceiptCommand struct {
@@ -272,6 +285,7 @@ type legacyRunners struct {
 	showReport               func([]string, io.Writer, io.Writer) int
 	itemizeReportLine        func([]string, io.Writer, io.Writer) int
 	submitReport             func([]string, io.Writer, io.Writer) int
+	editReport               func([]string, io.Writer, io.Writer) int
 	addReportReceipts        func([]string, io.Writer, io.Writer) int
 	attachReportReceipt      func([]string, io.Writer, io.Writer) int
 	removeReportReceipts     func([]string, io.Writer, io.Writer) int
@@ -298,6 +312,7 @@ func defaultLegacyRunners() legacyRunners {
 		showReport:               runShowReport,
 		itemizeReportLine:        runItemizeReportLine,
 		submitReport:             runSubmitReport,
+		editReport:               runEditReport,
 		addReportReceipts:        runAddReportReceipts,
 		attachReportReceipt:      runAttachReportReceipt,
 		removeReportReceipts:     runRemoveReportReceipts,
@@ -352,6 +367,7 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 	if !command.Draft {
 		args = append(args, "--submit")
 	}
+	args = append(args, approverArgs(command.InterimApprovers, command.FinalApprover)...)
 	// Every expense line adds several sequential round trips, so the default
 	// budget grows with the file; parse errors are reported by the runner.
 	var expenseBudget time.Duration
@@ -360,6 +376,9 @@ func (command *createCommand) Run(rt *commandRuntime) error {
 		if lines, err := loadExpenseFile(command.Expenses); err == nil {
 			expenseBudget = time.Duration(len(lines)) * expenseLineTimeout
 		}
+	}
+	if len(command.InterimApprovers) != 0 || command.FinalApprover != "" {
+		expenseBudget += time.Minute
 	}
 	if len(command.Receipts) == 0 {
 		args = append(args, "--timeout", selectedTimeout(rt.global.Timeout, 45*time.Second+expenseBudget).String())
@@ -436,6 +455,35 @@ func (command *reportItemizeCommand) Run(rt *commandRuntime) error {
 	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
 	args = append(args, "--line", strconv.Itoa(command.Line), "--itemization", command.Itemization)
 	return invokeLegacy(rt.runners.itemizeReportLine, args, rt)
+}
+
+func (command *reportEditCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	if command.Title == "" && len(command.InterimApprovers) == 0 && command.FinalApprover == "" {
+		return errors.New("--title, --interim-approver, or --final-approver is required")
+	}
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 3*time.Minute, command.DryRun)
+	if command.Title != "" {
+		args = append(args, "--title", command.Title)
+	}
+	args = append(args, approverArgs(command.InterimApprovers, command.FinalApprover)...)
+	return invokeLegacy(rt.runners.editReport, args, rt)
+}
+
+func approverArgs(interim []string, final string) []string {
+	var args []string
+	for _, name := range interim {
+		args = append(args, "--interim-approver", name)
+	}
+	if final != "" {
+		args = append(args, "--final-approver", final)
+	}
+	return args
 }
 
 func (command *reportAddReceiptCommand) Run(rt *commandRuntime) error {

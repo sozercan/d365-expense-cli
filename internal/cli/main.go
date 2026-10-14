@@ -85,6 +85,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	purpose := flags.String("purpose", "", "expense report title/purpose")
 	submit := flags.Bool("submit", false, "submit the newly created report instead of saving it as a Draft")
 	expensesPath := flags.String("expenses", "", "JSON file of expense lines to add before saving the Draft")
+	approvers := newApproverFlags(flags)
 	execute := flags.Bool("execute", false, "send the allowlisted report-creation requests")
 	timeout := flags.Duration("timeout", 45*time.Second, "overall execution timeout")
 	if err := flags.Parse(args); err != nil {
@@ -128,7 +129,13 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 	if *submit {
 		finalAction = expense.ReportFinalActionSubmit
 	}
-	reportRequest := expense.CreateReportRequest{Purpose: *purpose, Expenses: expenses, FinalAction: finalAction}
+	reportRequest := expense.CreateReportRequest{
+		Purpose:          *purpose,
+		Expenses:         expenses,
+		InterimApprovers: approvers.list(),
+		FinalApprover:    *approvers.final,
+		FinalAction:      finalAction,
+	}
 	plan, err := client.PlanCreateReport(reportRequest)
 	if err != nil {
 		fmt.Fprintf(stderr, "create-draft: %v\n", err)
@@ -179,6 +186,7 @@ func runCreateDraft(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "created draft %s: purpose=%q status=%s saved-and-closed=%t\n",
 			report.ReportNumber, report.Purpose, report.Status, report.SavedAndClosed)
 	}
+	printReportHeader(stdout, report.Header)
 	printExpenseResults(stdout, report.Expenses)
 	if checkpointErr != nil {
 		fmt.Fprintf(stderr, "create-draft: report operation succeeded, but session checkpoint failed; do not retry this expense operation: %v\n", checkpointErr)
