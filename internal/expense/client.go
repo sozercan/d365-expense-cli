@@ -326,6 +326,9 @@ type openDraftDetails struct {
 	detailsRootID  string
 	saveAndCloseID string
 	submitButton   dynamics.ModelNode
+	// existing is true for a Draft opened from the workspace rather than
+	// created by this operation.
+	existing bool
 }
 
 // createDraftDetails creates a Draft and leaves its details form open. The

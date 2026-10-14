@@ -8,7 +8,8 @@ receipts, submit reports, or save them as Drafts.
 - Create and submit a new expense report.
 - Save a new report as a Draft with `--draft`.
 - Add expense lines to a new Draft, including itemized hotel stays.
-- List, itemize, submit, or delete an existing Draft report.
+- List, itemize, submit, or delete an existing Draft report, and add or
+  attach its receipts.
 - List and delete unattached expenses and receipts.
 - Attach up to 20 PNG receipts to a new report.
 - Preview a report with `--dry-run` before making changes.
@@ -218,8 +219,12 @@ close it when done. They only work on Drafts in the first page of the list
 be re-imported.
 
 ```bash
-# List the lines, numbered in report order
+# List the lines, numbered in report order, and the report's receipts
 d365-expense report show --session work --report <report-id>
+
+# Upload PNG receipts; each is listed by its file name without .png
+d365-expense report add-receipt --draft --session work --report <report-id> \
+  --receipt ride-receipt.png --dry-run
 
 # Itemize line 11 into the rows in folio.json
 d365-expense report itemize --draft --session work --report <report-id> \
@@ -250,7 +255,9 @@ d365-expense report delete --draft --session work --report <report-id> --dry-run
 ```
 
 The rows must add up exactly to the selected line's amount; otherwise
-`report itemize` stops before changing anything. `report attach-receipt`
+`report itemize` stops before changing anything. `report add-receipt` uploads
+through the same checks as `create --receipt`: the report must stay a Draft
+and its receipt count must grow by exactly one per receipt. `report attach-receipt`
 names a receipt by the file name shown on the report's Receipts tab and
 matches the line in Dynamics' Attach to expense list by date, amount, and
 merchant. `report remove-receipt` requires `--count` to equal the number of
@@ -340,7 +347,8 @@ See [Troubleshooting](docs/troubleshooting.md) for detailed recovery guidance.
 - `create` operates on new reports; it cannot reopen and submit an existing
   Draft by report number; use the `report` commands for existing Drafts.
 - The CLI does not approve, post, or recall reports.
-- Receipts must be PNG files and are attached at report level.
+- Receipts must be PNG files. They are uploaded at report level; use
+  `report attach-receipt` to attach one to an expense line.
 - Expense lines are supported only on new Drafts created with `--draft`.
 - CDP acquisition currently targets Microsoft Edge.
 - Raw HAR capture requires owner-only file permissions and is not supported on

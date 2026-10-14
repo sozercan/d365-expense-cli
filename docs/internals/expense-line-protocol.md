@@ -114,6 +114,18 @@ form's `MainGrid` makes it active; the card's Actions menu then targets it.
 requires the workspace to be restored, and refreshes the list to confirm the
 report's `ApprovalStatus_field` is no longer `1`.
 
+## Add receipts to an existing Draft
+
+`report add-receipt` opens the Draft, activates `ReceiptsTabPage`, and uses the
+same `NewReceiptButton` upload sequence as a new report. One difference: an
+existing Draft's report record is unchanged while receipts are added, so
+Dynamics does not resend it, and the responses after closing the preflight
+dialog and after OK carry no `expenseReportStatus_dataMethod`. For Drafts
+opened from the workspace, the CLI accepts an omitted status (a status that is
+present must still be Draft) and relies on `ReceiptCount` growing by exactly
+one. `report show` activates the same tab to list receipt names and whether
+each is attached to a line.
+
 ## Attach a report receipt to a line
 
 On the opened report, `ActivateTab` on `ReceiptsTabPage` returns the

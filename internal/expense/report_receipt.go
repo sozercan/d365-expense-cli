@@ -119,134 +119,11 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 			return CreateReportWithReceiptsResult{}, err
 		}
 	}
-	createdReceiptModel, err := dynamics.DiscoverReceiptModel(draft.responseBody)
-	if err != nil {
-		return CreateReportWithReceiptsResult{}, err
-	}
-	if createdReceiptModel.ReceiptsTabPage.ID == "" || createdReceiptModel.ReceiptsTabPage.RootID != draft.detailsRootID {
-		return CreateReportWithReceiptsResult{}, errors.New("expense: ReceiptsTabPage control not found in new report details form")
-	}
-	beforeReceiptCount := -1
-	if createdReceiptModel.ReceiptCountPresent {
-		beforeReceiptCount = createdReceiptModel.ReceiptCount
-	}
-
-	activate, err := buildActivateReceiptsTabMessage(
-		client.nextClientSequence,
-		draft.detailsRootID,
-		createdReceiptModel.ReceiptsTabPage.ID,
+	receiptClient, beforeReceiptCount, attachedReceipts, err := client.uploadReceiptsToOpenDraft(
+		ctx, draft, request.Receipts, request.UploadContract, request.FinalAction == ReportFinalActionSubmit,
 	)
 	if err != nil {
 		return CreateReportWithReceiptsResult{}, err
-	}
-	activateBody, err := client.sendValidated(ctx, []dynamics.Message{activate}, func(envelope dynamics.Envelope) error {
-		return validateActivateReceiptsTabEnvelope(
-			envelope,
-			draft.detailsRootID,
-			createdReceiptModel.ReceiptsTabPage.ID,
-		)
-	})
-	if err != nil {
-		return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activate Receipts tab: %w", err)
-	}
-	activatedModel, err := dynamics.DiscoverReceiptModel(activateBody)
-	if err != nil {
-		return CreateReportWithReceiptsResult{}, err
-	}
-	if err := validateReceiptModelForOpenDraft(activatedModel, draft.reportNumber); err != nil {
-		return CreateReportWithReceiptsResult{}, err
-	}
-	if activatedModel.AddReceiptButton.ID == "" || activatedModel.AddReceiptButton.Name != dynamics.ControlNewReceiptButton ||
-		activatedModel.AddReceiptButton.RootID != draft.detailsRootID {
-		return CreateReportWithReceiptsResult{}, errors.New("expense: activated Receipts tab response lacks NewReceiptButton in the new report")
-	}
-	if activatedModel.ReceiptCountPresent {
-		if beforeReceiptCount >= 0 && activatedModel.ReceiptCount != beforeReceiptCount {
-			return CreateReportWithReceiptsResult{}, errors.New("expense: receipt count changed while activating the Receipts tab")
-		}
-		beforeReceiptCount = activatedModel.ReceiptCount
-	}
-	if beforeReceiptCount < 0 {
-		return CreateReportWithReceiptsResult{}, errors.New("expense: new draft receipt count is missing after activating the Receipts tab")
-	}
-	if len(request.Receipts) > maxInt()-beforeReceiptCount {
-		return CreateReportWithReceiptsResult{}, errors.New("expense: cumulative receipt count would overflow")
-	}
-
-	saveAndCloseID := draft.saveAndCloseID
-	if activatedModel.SaveAndClose.ID != "" {
-		if activatedModel.SaveAndClose.RootID != draft.detailsRootID {
-			return CreateReportWithReceiptsResult{}, errors.New("expense: activated Receipts tab returned SaveAndClose outside the new report")
-		}
-		saveAndCloseID = activatedModel.SaveAndClose.ID
-	}
-	submitButton := draft.submitButton
-	if activatedSubmitButton, ok := activatedModel.FindSubmitButtonInRoot(draft.detailsRootID); ok {
-		mergedSubmitButton := dynamics.MergeModelNode(submitButton, activatedSubmitButton)
-		if request.FinalAction == ReportFinalActionSubmit {
-			if err := dynamics.ValidateSubmitButton(mergedSubmitButton, draft.detailsRootID); err != nil {
-				return CreateReportWithReceiptsResult{}, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
-			}
-		}
-		submitButton = mergedSubmitButton
-	}
-
-	uploadEndpoint, err := receiptUploadEndpoint(client.origin, request.UploadContract)
-	if err != nil {
-		return CreateReportWithReceiptsResult{}, err
-	}
-	receiptClient := &ReceiptClient{
-		httpClient:                 client.httpClient,
-		endpoint:                   client.endpoint,
-		uploadEndpoint:             uploadEndpoint,
-		origin:                     client.origin,
-		headers:                    client.headers.Clone(),
-		cookies:                    cloneCookies(client.cookies),
-		company:                    client.company,
-		language:                   client.language,
-		channelID:                  client.channelID,
-		lastServerSequence:         client.lastServerSequence,
-		nextClientSequence:         client.nextClientSequence,
-		reportNumber:               draft.reportNumber,
-		detailsRootID:              draft.detailsRootID,
-		addReceiptButtonID:         activatedModel.AddReceiptButton.ID,
-		saveAndCloseID:             saveAndCloseID,
-		submitButton:               submitButton,
-		maxChunkSize:               request.UploadContract.maxChunkSize,
-		maxSupportedSingleFileSize: request.UploadContract.maxSupportedSingleFileSize,
-		documentType:               request.UploadContract.documentType,
-		multipartFieldOrder:        append([]string(nil), request.UploadContract.multipartFieldOrder...),
-		lastReceiptCount:           beforeReceiptCount,
-	}
-
-	attachedReceipts := make([]CreateReportReceiptResult, 0, len(request.Receipts))
-	for index, receipt := range request.Receipts {
-		attached, attachErr := receiptClient.attachReceiptWithoutSave(ctx, AttachReceiptRequest{
-			ReportNumber: draft.reportNumber,
-			Notes:        receipt.Notes,
-			Receipt:      receipt.Receipt,
-		})
-		client.syncReceiptSession(receiptClient)
-		if attachErr != nil {
-			return CreateReportWithReceiptsResult{}, fmt.Errorf(
-				"expense: attach receipt %d (%q) to new draft: %w",
-				index+1,
-				receipt.Receipt.Filename,
-				attachErr,
-			)
-		}
-		expectedCount := beforeReceiptCount + index + 1
-		if attached.Status != "Draft" || attached.ReceiptCount != expectedCount {
-			return CreateReportWithReceiptsResult{}, fmt.Errorf(
-				"expense: receipt %d confirmation did not preserve Draft status and cumulative count %d",
-				index+1,
-				expectedCount,
-			)
-		}
-		attachedReceipts = append(attachedReceipts, CreateReportReceiptResult{
-			Attached:          attached.Attached,
-			ReceiptCountAfter: attached.ReceiptCount,
-		})
 	}
 
 	status := "Draft"
@@ -283,6 +160,151 @@ func (client *Client) CreateReportWithReceipts(ctx context.Context, request Crea
 		SavedAndClosed:     savedAndClosed,
 		Submitted:          submitted,
 	}, nil
+}
+
+// uploadReceiptsToOpenDraft activates the open Draft's Receipts tab and
+// uploads every receipt in order, verifying Draft status and the cumulative
+// receipt count after each one. It leaves the details form open and returns
+// the receipt client for the caller's final action. The caller must hold
+// client.mu.
+func (client *Client) uploadReceiptsToOpenDraft(
+	ctx context.Context,
+	draft openDraftDetails,
+	receipts []CreateReportReceiptInput,
+	contract ReceiptUploadContract,
+	submit bool,
+) (*ReceiptClient, int, []CreateReportReceiptResult, error) {
+	openModel, err := dynamics.DiscoverReceiptModel(draft.responseBody)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if openModel.ReceiptsTabPage.ID == "" || openModel.ReceiptsTabPage.RootID != draft.detailsRootID {
+		return nil, 0, nil, errors.New("expense: ReceiptsTabPage control not found in the report details form")
+	}
+	beforeReceiptCount := -1
+	if openModel.ReceiptCountPresent {
+		beforeReceiptCount = openModel.ReceiptCount
+	}
+
+	activate, err := buildActivateReceiptsTabMessage(
+		client.nextClientSequence,
+		draft.detailsRootID,
+		openModel.ReceiptsTabPage.ID,
+	)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	activateBody, err := client.sendValidated(ctx, []dynamics.Message{activate}, func(envelope dynamics.Envelope) error {
+		return validateActivateReceiptsTabEnvelope(
+			envelope,
+			draft.detailsRootID,
+			openModel.ReceiptsTabPage.ID,
+		)
+	})
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("expense: activate Receipts tab: %w", err)
+	}
+	activatedModel, err := dynamics.DiscoverReceiptModel(activateBody)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if err := validateReceiptModelForOpenDraft(activatedModel, draft.reportNumber); err != nil {
+		return nil, 0, nil, err
+	}
+	if activatedModel.AddReceiptButton.ID == "" || activatedModel.AddReceiptButton.Name != dynamics.ControlNewReceiptButton ||
+		activatedModel.AddReceiptButton.RootID != draft.detailsRootID {
+		return nil, 0, nil, errors.New("expense: activated Receipts tab response lacks NewReceiptButton in the report")
+	}
+	if activatedModel.ReceiptCountPresent {
+		if beforeReceiptCount >= 0 && activatedModel.ReceiptCount != beforeReceiptCount {
+			return nil, 0, nil, errors.New("expense: receipt count changed while activating the Receipts tab")
+		}
+		beforeReceiptCount = activatedModel.ReceiptCount
+	}
+	if beforeReceiptCount < 0 {
+		return nil, 0, nil, errors.New("expense: draft receipt count is missing after activating the Receipts tab")
+	}
+	if len(receipts) > maxInt()-beforeReceiptCount {
+		return nil, 0, nil, errors.New("expense: cumulative receipt count would overflow")
+	}
+
+	saveAndCloseID := draft.saveAndCloseID
+	if activatedModel.SaveAndClose.ID != "" {
+		if activatedModel.SaveAndClose.RootID != draft.detailsRootID {
+			return nil, 0, nil, errors.New("expense: activated Receipts tab returned SaveAndClose outside the report")
+		}
+		saveAndCloseID = activatedModel.SaveAndClose.ID
+	}
+	submitButton := draft.submitButton
+	if activatedSubmitButton, ok := activatedModel.FindSubmitButtonInRoot(draft.detailsRootID); ok {
+		mergedSubmitButton := dynamics.MergeModelNode(submitButton, activatedSubmitButton)
+		if submit {
+			if err := dynamics.ValidateSubmitButton(mergedSubmitButton, draft.detailsRootID); err != nil {
+				return nil, 0, nil, fmt.Errorf("expense: activated Receipts tab returned an unsupported SubmitButton: %w", err)
+			}
+		}
+		submitButton = mergedSubmitButton
+	}
+
+	uploadEndpoint, err := receiptUploadEndpoint(client.origin, contract)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	receiptClient := &ReceiptClient{
+		httpClient:                 client.httpClient,
+		endpoint:                   client.endpoint,
+		uploadEndpoint:             uploadEndpoint,
+		origin:                     client.origin,
+		headers:                    client.headers.Clone(),
+		cookies:                    cloneCookies(client.cookies),
+		company:                    client.company,
+		language:                   client.language,
+		channelID:                  client.channelID,
+		lastServerSequence:         client.lastServerSequence,
+		nextClientSequence:         client.nextClientSequence,
+		reportNumber:               draft.reportNumber,
+		detailsRootID:              draft.detailsRootID,
+		addReceiptButtonID:         activatedModel.AddReceiptButton.ID,
+		saveAndCloseID:             saveAndCloseID,
+		submitButton:               submitButton,
+		maxChunkSize:               contract.maxChunkSize,
+		maxSupportedSingleFileSize: contract.maxSupportedSingleFileSize,
+		documentType:               contract.documentType,
+		multipartFieldOrder:        append([]string(nil), contract.multipartFieldOrder...),
+		lastReceiptCount:           beforeReceiptCount,
+		existingDraft:              draft.existing,
+	}
+
+	attachedReceipts := make([]CreateReportReceiptResult, 0, len(receipts))
+	for index, receipt := range receipts {
+		attached, attachErr := receiptClient.attachReceiptWithoutSave(ctx, AttachReceiptRequest{
+			ReportNumber: draft.reportNumber,
+			Notes:        receipt.Notes,
+			Receipt:      receipt.Receipt,
+		})
+		client.syncReceiptSession(receiptClient)
+		if attachErr != nil {
+			return nil, 0, nil, fmt.Errorf(
+				"expense: attach receipt %d (%q) to the draft: %w",
+				index+1,
+				receipt.Receipt.Filename,
+				attachErr,
+			)
+		}
+		expectedCount := beforeReceiptCount + index + 1
+		if attached.Status != "Draft" || attached.ReceiptCount != expectedCount {
+			return nil, 0, nil, fmt.Errorf(
+				"expense: receipt %d confirmation did not preserve Draft status and cumulative count %d",
+				index+1,
+				expectedCount,
+			)
+		}
+		attachedReceipts = append(attachedReceipts, CreateReportReceiptResult{
+			Attached:          attached.Attached,
+			ReceiptCountAfter: attached.ReceiptCount,
+		})
+	}
+	return receiptClient, beforeReceiptCount, attachedReceipts, nil
 }
 
 func validateCreateReportWithReceiptsRequest(request CreateReportWithReceiptsRequest) error {

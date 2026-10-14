@@ -128,6 +128,7 @@ type reportCommand struct {
 	Show          reportShowCommand          `cmd:"" help:"List the expense lines of an existing Draft report."`
 	Itemize       reportItemizeCommand       `cmd:"" help:"Itemize one expense line of an existing Draft report."`
 	Submit        reportSubmitCommand        `cmd:"" help:"Submit an existing Draft report."`
+	AddReceipt    reportAddReceiptCommand    `cmd:"" name:"add-receipt" help:"Upload PNG receipts to an existing Draft report."`
 	AttachReceipt reportAttachReceiptCommand `cmd:"" name:"attach-receipt" help:"Attach a receipt already on a Draft report to one of its lines."`
 	RemoveReceipt reportRemoveReceiptCommand `cmd:"" name:"remove-receipt" help:"Remove receipts with one file name from a Draft report."`
 	Delete        reportDeleteCommand        `cmd:"" help:"Delete an existing Draft report."`
@@ -145,6 +146,15 @@ type reportItemizeCommand struct {
 	Line          int    `name:"line" required:"" help:"Line number shown by report show."`
 	Itemization   string `name:"itemization" required:"" type:"existingfile" placeholder:"FILE" help:"JSON file of itemization rows."`
 	DryRun        bool   `name:"dry-run" help:"Validate and print the plan without network requests."`
+}
+
+type reportAddReceiptCommand struct {
+	profileSource `embed:""`
+	Draft         bool     `name:"draft" required:"" help:"Required safety acknowledgement: modify only a Draft report."`
+	Report        string   `name:"report" required:"" help:"Draft expense report number."`
+	Receipts      []string `name:"receipt" required:"" type:"existingfile" placeholder:"FILE" help:"PNG receipt; repeat in upload order. Dynamics lists it by file name without the extension."`
+	ReceiptNote   string   `name:"receipt-note" help:"Notes applied to every receipt."`
+	DryRun        bool     `name:"dry-run" help:"Validate and print the plan without network requests."`
 }
 
 type reportAttachReceiptCommand struct {
@@ -262,6 +272,7 @@ type legacyRunners struct {
 	showReport               func([]string, io.Writer, io.Writer) int
 	itemizeReportLine        func([]string, io.Writer, io.Writer) int
 	submitReport             func([]string, io.Writer, io.Writer) int
+	addReportReceipts        func([]string, io.Writer, io.Writer) int
 	attachReportReceipt      func([]string, io.Writer, io.Writer) int
 	removeReportReceipts     func([]string, io.Writer, io.Writer) int
 	listExpenses             func([]string, io.Writer, io.Writer) int
@@ -287,6 +298,7 @@ func defaultLegacyRunners() legacyRunners {
 		showReport:               runShowReport,
 		itemizeReportLine:        runItemizeReportLine,
 		submitReport:             runSubmitReport,
+		addReportReceipts:        runAddReportReceipts,
 		attachReportReceipt:      runAttachReportReceipt,
 		removeReportReceipts:     runRemoveReportReceipts,
 		listExpenses:             runListExpenses,
@@ -424,6 +436,27 @@ func (command *reportItemizeCommand) Run(rt *commandRuntime) error {
 	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, 5*time.Minute, command.DryRun)
 	args = append(args, "--line", strconv.Itoa(command.Line), "--itemization", command.Itemization)
 	return invokeLegacy(rt.runners.itemizeReportLine, args, rt)
+}
+
+func (command *reportAddReceiptCommand) Run(rt *commandRuntime) error {
+	if !command.Draft {
+		return errors.New("--draft is required")
+	}
+	if err := command.profileSource.validate(); err != nil {
+		return err
+	}
+	if len(command.Receipts) > maxCLIReceipts {
+		return fmt.Errorf("at most %d receipts are supported", maxCLIReceipts)
+	}
+	timeout := 2*time.Minute + time.Duration(len(command.Receipts))*time.Minute
+	args := reportArgs(command.profileSource, command.Report, rt.global.Timeout, timeout, command.DryRun)
+	for _, receipt := range command.Receipts {
+		args = append(args, "--file", receipt)
+	}
+	if command.ReceiptNote != "" {
+		args = append(args, "--notes", command.ReceiptNote)
+	}
+	return invokeLegacy(rt.runners.addReportReceipts, args, rt)
 }
 
 func (command *reportAttachReceiptCommand) Run(rt *commandRuntime) error {

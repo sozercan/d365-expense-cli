@@ -112,48 +112,18 @@ func (client *Client) RemoveReportReceipts(ctx context.Context, request RemoveRe
 		return 0, err
 	}
 	root := draft.detailsRootID
-	openModel, err := dynamics.DiscoverResponseModel(draft.responseBody)
+	tab, err := client.readReceiptsTab(ctx, draft)
 	if err != nil {
 		return 0, err
 	}
-	tab, ok := openModel.FindControlInRoot(dynamics.ControlReceiptsTabPage, root)
-	if !ok || tab.ID == "" {
-		return 0, errors.New("expense: Receipts tab not found in the report")
-	}
-	count, ok := receiptCount(openModel, root)
-	if !ok {
-		return 0, errors.New("expense: the report's receipt count is missing")
-	}
-	activate, err := buildActivateReceiptsTabMessage(client.nextClientSequence, root, tab.ID)
-	if err != nil {
-		return 0, err
-	}
-	body, err := client.sendValidated(ctx, []dynamics.Message{activate}, func(envelope dynamics.Envelope) error {
-		return validateActivateReceiptsTabEnvelope(envelope, root, tab.ID)
-	})
-	if err != nil {
-		return 0, fmt.Errorf("expense: activate Receipts tab: %w", err)
-	}
-	tabModel, err := dynamics.DiscoverResponseModel(body)
-	if err != nil {
-		return 0, err
-	}
-	grid, gridOK := tabModel.FindControlInRoot(dynamics.ControlReceiptsGrid, root)
-	remove, removeOK := openModel.FindControlInRoot(dynamics.ControlRemoveReceiptButton, root)
-	if node, ok := tabModel.FindControlInRoot(dynamics.ControlRemoveReceiptButton, root); ok && node.ID != "" {
+	body, list, count := tab.body, tab.list, len(tab.list.order)
+	grid, gridOK := tab.model.FindControlInRoot(dynamics.ControlReceiptsGrid, root)
+	remove, removeOK := tab.openModel.FindControlInRoot(dynamics.ControlRemoveReceiptButton, root)
+	if node, ok := tab.model.FindControlInRoot(dynamics.ControlRemoveReceiptButton, root); ok && node.ID != "" {
 		remove, removeOK = node, true
 	}
 	if !gridOK || !removeOK || grid.ID == "" || remove.ID == "" {
 		return 0, errors.New("expense: receipts grid or Remove control not found")
-	}
-	list := &receiptList{root: root, rows: make(map[string]receiptRow)}
-	for _, response := range [][]byte{draft.responseBody, body} {
-		if err := list.observe(response); err != nil {
-			return 0, err
-		}
-	}
-	if len(list.order) != count {
-		return 0, fmt.Errorf("expense: the Receipts tab lists %d receipts, not the report's %d", len(list.order), count)
 	}
 	targets, err := list.named(request.Receipt)
 	if err != nil {
@@ -259,6 +229,57 @@ func (client *Client) RemoveReportReceipts(ctx context.Context, request RemoveRe
 		return removed, err
 	}
 	return removed, nil
+}
+
+// openReceiptsTab is an open Draft's activated Receipts tab.
+type openReceiptsTab struct {
+	body      []byte
+	openModel dynamics.ResponseModel
+	model     dynamics.ResponseModel
+	list      *receiptList
+}
+
+// readReceiptsTab activates the open Draft's Receipts tab and lists its
+// receipts, verified against the report's receipt count. The caller must
+// hold client.mu.
+func (client *Client) readReceiptsTab(ctx context.Context, draft openDraftDetails) (openReceiptsTab, error) {
+	root := draft.detailsRootID
+	openModel, err := dynamics.DiscoverResponseModel(draft.responseBody)
+	if err != nil {
+		return openReceiptsTab{}, err
+	}
+	tab, ok := openModel.FindControlInRoot(dynamics.ControlReceiptsTabPage, root)
+	if !ok || tab.ID == "" {
+		return openReceiptsTab{}, errors.New("expense: Receipts tab not found in the report")
+	}
+	count, ok := receiptCount(openModel, root)
+	if !ok {
+		return openReceiptsTab{}, errors.New("expense: the report's receipt count is missing")
+	}
+	activate, err := buildActivateReceiptsTabMessage(client.nextClientSequence, root, tab.ID)
+	if err != nil {
+		return openReceiptsTab{}, err
+	}
+	body, err := client.sendValidated(ctx, []dynamics.Message{activate}, func(envelope dynamics.Envelope) error {
+		return validateActivateReceiptsTabEnvelope(envelope, root, tab.ID)
+	})
+	if err != nil {
+		return openReceiptsTab{}, fmt.Errorf("expense: activate Receipts tab: %w", err)
+	}
+	model, err := dynamics.DiscoverResponseModel(body)
+	if err != nil {
+		return openReceiptsTab{}, err
+	}
+	list := &receiptList{root: root, rows: make(map[string]receiptRow)}
+	for _, response := range [][]byte{draft.responseBody, body} {
+		if err := list.observe(response); err != nil {
+			return openReceiptsTab{}, err
+		}
+	}
+	if len(list.order) != count {
+		return openReceiptsTab{}, fmt.Errorf("expense: the Receipts tab lists %d receipts, not the report's %d", len(list.order), count)
+	}
+	return openReceiptsTab{body: body, openModel: openModel, model: model, list: list}, nil
 }
 
 func receiptCount(model dynamics.ResponseModel, rootID string) (int, bool) {

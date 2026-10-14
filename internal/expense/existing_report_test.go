@@ -59,10 +59,18 @@ func workspaceStep(dynamics.Envelope) []json.RawMessage {
 
 func TestShowDraftReportActivatesOpensListsAndCloses(t *testing.T) {
 	t.Parallel()
-	steps := append(openSteps(
+	steps := openSteps(
 		draftLine("160", "Parking", "2026-09-29", "3.00", "EXAMPLE TRANSIT"),
 		draftLine("162", "Hotel", "2026-10-03", "120.00", "EXAMPLE HOTEL"),
-	), workspaceStep)
+	)
+	open := steps[2]
+	steps[2] = func(request dynamics.Envelope) []json.RawMessage {
+		return append(open(request), controlUpdate("details", control("receipts-tab", dynamics.ControlReceiptsTabPage)), receiptCountControl("2"))
+	}
+	steps = append(steps, func(dynamics.Envelope) []json.RawMessage {
+		reload := receiptReload("171", map[string]string{"171": "hotel-folio", "173": "ride-receipt-2"}, "171", "173")
+		return append(reload, recordUpdate("details", map[string]any{"dataSourceName_internal": dynamics.DataSourceReceiptRefs, "MasterTrackingId": "171", "getAttachmentStatus_dataMethod": "Attached"}))
+	}, workspaceStep)
 	server, emitted := scriptedServer(t, steps)
 	client := deleteClient(t, server.URL, true, expense.WithHTTPClient(server.Client()))
 
@@ -73,12 +81,12 @@ func TestShowDraftReportActivatesOpensListsAndCloses(t *testing.T) {
 	want := expense.ReportDetails{ReportNumber: "ER-0002", Purpose: "Purpose ER-0002", Status: "Draft", Lines: []expense.ReportLine{
 		{Number: 1, Date: "2026-09-29", Category: "Parking", Amount: "3.00 USD", Merchant: "EXAMPLE TRANSIT"},
 		{Number: 2, Date: "2026-10-03", Category: "Hotel", Amount: "120.00 USD", Merchant: "EXAMPLE HOTEL"},
-	}}
+	}, Receipts: []expense.ReportReceipt{{Name: "hotel-folio", Attached: true}, {Name: "ride-receipt-2"}}}
 	if !reflect.DeepEqual(details, want) {
 		t.Fatalf("ShowDraftReport() = %#v, want %#v", details, want)
 	}
 	if got, want := *emitted, []string{
-		"ExecuteShortcuts:" + deleteWorkspace, "ChangeSelectedIndex:grid", "ExecuteHyperlink:link", "Click:save-and-close",
+		"ExecuteShortcuts:" + deleteWorkspace, "ChangeSelectedIndex:grid", "ExecuteHyperlink:link", "ActivateTab:receipts-tab", "Click:save-and-close",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("emitted commands = %v, want %v", got, want)
 	}

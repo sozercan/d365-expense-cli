@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sozercan/d365-expense-cli/internal/expense"
@@ -164,6 +166,14 @@ func runShowReport(args []string, stdout, stderr io.Writer) int {
 			}
 			fmt.Fprintln(stdout)
 		}
+		fmt.Fprintf(stdout, "receipts=%d\n", len(details.Receipts))
+		for _, receipt := range details.Receipts {
+			status := "unattached"
+			if receipt.Attached {
+				status = "attached to a line"
+			}
+			fmt.Fprintf(stdout, "  %q %s\n", receipt.Name, status)
+		}
 		return nil
 	})
 }
@@ -232,6 +242,51 @@ func runSubmitReport(args []string, stdout, stderr io.Writer) int {
 		result, err := client.SubmitDraftReport(ctx, *report.reportNumber)
 		if err == nil {
 			fmt.Fprintf(stdout, "submitted report %s: purpose=%q approval-status-code=%s\n", result.ReportNumber, result.Purpose, result.Status)
+		}
+		return err
+	})
+}
+
+func runAddReportReceipts(args []string, stdout, stderr io.Writer) int {
+	const name = "report add-receipt"
+	report := newReportFlags(name, stderr, 5*time.Minute)
+	var paths receiptPathList
+	report.flags.Var(&paths, "file", "private PNG receipt file; repeat for every receipt")
+	notes := report.flags.String("notes", "", "optional notes applied to every receipt")
+	client, code := report.parse(name, args, stderr)
+	if client == nil {
+		return code
+	}
+	if len(paths) == 0 || len(paths) > maxCLIReceipts {
+		fmt.Fprintf(stderr, "%s requires 1 to %d --file receipts\n", name, maxCLIReceipts)
+		return 2
+	}
+	contract := expense.BuiltinReceiptUploadContract()
+	receipts, err := receiptInputsFromPaths(paths, *notes, contract.MaxSupportedSingleFileSize())
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
+		return 1
+	}
+	request := expense.AddReportReceiptsRequest{ReportNumber: *report.reportNumber, Receipts: receipts, UploadContract: contract}
+	if !*report.execute {
+		printReportPlan(stdout, request.ReportNumber, []string{
+			"open the Draft and activate its Receipts tab",
+			"upload each receipt in order, verifying the report stays a Draft and its receipt count grows by exactly one",
+			"save and close the Draft",
+		})
+		for index, receipt := range receipts {
+			fmt.Fprintf(stdout, "  receipt %d: %q (%d bytes)\n", index+1, receipt.Receipt.Filename, receipt.Receipt.Size)
+		}
+		return 0
+	}
+	return report.run(name, client, stderr, func(ctx context.Context, client *expense.Client) error {
+		result, err := client.AddReportReceipts(ctx, request)
+		if err == nil {
+			fmt.Fprintf(stdout, "added %d receipts to draft %s: receipt-count=%d->%d\n",
+				len(result.Receipts), request.ReportNumber, result.ReceiptCountBefore, result.ReceiptCountAfter)
+			for _, added := range result.Receipts {
+				fmt.Fprintf(stdout, "- %q\n", strings.TrimSuffix(added.Attached.Filename, filepath.Ext(added.Attached.Filename)))
+			}
 		}
 		return err
 	})

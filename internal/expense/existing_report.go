@@ -31,12 +31,20 @@ type ReportLine struct {
 	Receipts bool
 }
 
+// ReportReceipt is one receipt on an existing report's Receipts tab, listed
+// by its file name. Attached means it is attached to an expense line.
+type ReportReceipt struct {
+	Name     string
+	Attached bool
+}
+
 // ReportDetails contains only non-secret data from an existing Draft.
 type ReportDetails struct {
 	ReportNumber string
 	Purpose      string
 	Status       string
 	Lines        []ReportLine
+	Receipts     []ReportReceipt
 }
 
 // ItemizeReportLineRequest itemizes one existing line of a Draft. Line is the
@@ -47,8 +55,8 @@ type ItemizeReportLineRequest struct {
 	Itemization  []ItemizationInput
 }
 
-// ShowDraftReport opens an existing Draft, lists its lines, and saves and
-// closes it unchanged.
+// ShowDraftReport opens an existing Draft, lists its lines and receipts, and
+// saves and closes it unchanged.
 func (client *Client) ShowDraftReport(ctx context.Context, reportNumber string) (details ReportDetails, err error) {
 	if err := client.validateExistingReport(ctx, reportNumber); err != nil {
 		return ReportDetails{}, err
@@ -66,12 +74,23 @@ func (client *Client) ShowDraftReport(ctx context.Context, reportNumber string) 
 	if err != nil {
 		return ReportDetails{}, err
 	}
+	tab, err := client.readReceiptsTab(ctx, draft)
+	if err != nil {
+		return ReportDetails{}, err
+	}
 	if err := client.saveAndCloseOpenDraft(ctx, draft); err != nil {
 		return ReportDetails{}, err
 	}
 	details = ReportDetails{ReportNumber: reportNumber, Purpose: purpose, Status: draft.status}
 	for _, line := range lines {
 		details.Lines = append(details.Lines, line.ReportLine)
+	}
+	for _, id := range tab.list.order {
+		row := tab.list.rows[id]
+		if row.name == "" {
+			return ReportDetails{}, errors.New("expense: Dynamics did not name every receipt")
+		}
+		details.Receipts = append(details.Receipts, ReportReceipt{Name: row.name, Attached: row.attached})
 	}
 	return details, nil
 }
@@ -341,6 +360,7 @@ func (client *Client) openDraftReport(ctx context.Context, reportNumber string) 
 		detailsRootID:  details.ID,
 		saveAndCloseID: saveAndClose.ID,
 		submitButton:   submitButton,
+		existing:       true,
 	}, row["Txt2_field"], nil
 }
 

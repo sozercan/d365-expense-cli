@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -386,6 +387,12 @@ func scriptedServer(t *testing.T, steps []scriptedStep) (*httptest.Server, *[]st
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		if r.URL.Path == "/filemanagement" {
+			emitted = append(emitted, "upload")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"fileId":"uploaded-file-id"}]`)
+			return
+		}
 		var request dynamics.Envelope
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode request: %v", err)
