@@ -224,6 +224,10 @@ d365-expense report show --session work --report <report-id>
 d365-expense report itemize --draft --session work --report <report-id> \
   --line 11 --itemization folio.json --dry-run
 
+# Attach a receipt already on the report to line 8
+d365-expense report attach-receipt --draft --session work --report <report-id> \
+  --line 8 --receipt ride-receipt --dry-run
+
 # Submit the Draft
 d365-expense report submit --session work --report <report-id> --dry-run
 
@@ -241,7 +245,10 @@ d365-expense report delete --draft --session work --report <report-id> --dry-run
 ```
 
 The rows must add up exactly to the selected line's amount; otherwise
-`report itemize` stops before changing anything. Remove `--dry-run` to run a
+`report itemize` stops before changing anything. `report attach-receipt`
+names a receipt by the file name shown on the report's Receipts tab and
+matches the line in Dynamics' Attach to expense list by date, amount, and
+merchant. Remove `--dry-run` to run a
 command. `report submit` clicks only the report's validated Submit button and
 then refreshes the list to confirm the report left Draft status.
 

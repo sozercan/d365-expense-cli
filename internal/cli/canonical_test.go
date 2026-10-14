@@ -218,15 +218,17 @@ func TestCanonicalReportDeleteRequiresDraftAndRoutesReport(t *testing.T) {
 func TestCanonicalReportCommandsRouteArguments(t *testing.T) {
 	t.Parallel()
 	rows := writeExpenseFile(t, `[{"subcategory": "Incidentals", "daily_rate": "120.00", "days": 1}]`)
-	var show, itemize, submit []string
+	var show, itemize, submit, attach []string
 	runners := defaultLegacyRunners()
 	runners.showReport = func(args []string, _, _ io.Writer) int { show = append([]string(nil), args...); return 0 }
 	runners.itemizeReportLine = func(args []string, _, _ io.Writer) int { itemize = append([]string(nil), args...); return 0 }
 	runners.submitReport = func(args []string, _, _ io.Writer) int { submit = append([]string(nil), args...); return 0 }
+	runners.attachReportReceipt = func(args []string, _, _ io.Writer) int { attach = append([]string(nil), args...); return 0 }
 	for _, args := range [][]string{
 		{"report", "show", "--session", "work", "--report", "D0001"},
 		{"report", "itemize", "--draft", "--session", "work", "--report", "D0001", "--line", "11", "--itemization", rows, "--dry-run"},
 		{"report", "submit", "--session", "work", "--report", "D0001"},
+		{"report", "attach-receipt", "--draft", "--session", "work", "--report", "D0001", "--line", "8", "--receipt", "ride-receipt"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := runCanonicalWithRunners(args, &stdout, &stderr, runners); code != 0 {
@@ -237,6 +239,7 @@ func TestCanonicalReportCommandsRouteArguments(t *testing.T) {
 		{show, []string{"--session", "work", "--report", "D0001", "--timeout", "2m0s", "--execute"}},
 		{itemize, []string{"--session", "work", "--report", "D0001", "--timeout", "5m0s", "--line", "11", "--itemization", rows}},
 		{submit, []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--execute"}},
+		{attach, []string{"--session", "work", "--report", "D0001", "--timeout", "3m0s", "--execute", "--line", "8", "--receipt", "ride-receipt"}},
 	} {
 		if !reflect.DeepEqual(check.got, check.want) {
 			t.Fatalf("args = %#v, want %#v", check.got, check.want)

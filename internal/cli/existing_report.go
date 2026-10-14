@@ -236,3 +236,36 @@ func runSubmitReport(args []string, stdout, stderr io.Writer) int {
 		return err
 	})
 }
+
+func runAttachReportReceipt(args []string, stdout, stderr io.Writer) int {
+	const name = "report attach-receipt"
+	report := newReportFlags(name, stderr, 3*time.Minute)
+	line := report.flags.Int("line", 0, "line number shown by report show")
+	receipt := report.flags.String("receipt", "", "receipt file name as listed on the report")
+	client, code := report.parse(name, args, stderr)
+	if client == nil {
+		return code
+	}
+	if *line < 1 || *receipt == "" {
+		fmt.Fprintf(stderr, "%s requires --line and --receipt\n", name)
+		return 2
+	}
+	request := expense.AttachReportReceiptRequest{ReportNumber: *report.reportNumber, Line: *line, Receipt: *receipt}
+	if !*report.execute {
+		printReportPlan(stdout, request.ReportNumber, []string{
+			fmt.Sprintf("open the Draft and select receipt %q on its Receipts tab", request.Receipt),
+			fmt.Sprintf("open Attach to expense and select the offered line matching line %d by date, amount, and merchant", request.Line),
+			"attach, verify Dynamics recorded the match and stopped offering the line, and close the popup",
+			"save and close the Draft",
+		})
+		return 0
+	}
+	return report.run(name, client, stderr, func(ctx context.Context, client *expense.Client) error {
+		result, err := client.AttachReportReceipt(ctx, request)
+		if err == nil {
+			fmt.Fprintf(stdout, "attached receipt %q to line %d of draft %s: %s %s %s\n",
+				result.Receipt, request.Line, request.ReportNumber, result.Date, result.Category, result.Amount)
+		}
+		return err
+	})
+}

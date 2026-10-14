@@ -362,6 +362,7 @@ func (client *Client) saveAndCloseOpenDraft(ctx context.Context, draft openDraft
 type reportLine struct {
 	ReportLine
 	trackingID string
+	merchantID string
 }
 
 // reportLines lists the opened report's expense lines in display order.
@@ -401,6 +402,7 @@ func reportLines(body []byte, detailsRootID string) ([]reportLine, error) {
 				Receipts: fields["ReceiptsAttached_field"] != "" && fields["ReceiptsAttached_field"] != "0",
 			},
 			trackingID: id,
+			merchantID: fields["MerchantId_field"],
 		})
 	}
 	return lines, nil

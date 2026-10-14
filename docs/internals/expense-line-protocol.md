@@ -114,6 +114,26 @@ form's `MainGrid` makes it active; the card's Actions menu then targets it.
 requires the workspace to be restored, and refreshes the list to confirm the
 report's `ApprovalStatus_field` is no longer `1`.
 
+## Attach a report receipt to a line
+
+On the opened report, `ActivateTab` on `ReceiptsTabPage` returns the
+`DocuValue_ds` receipt rows with `FileName_field`, the `ReceiptsTabPageGrid`,
+and `MatchExpensesButton` (Attach to expense).
+
+1. `ChangeSelectedIndex` with mark mode 0 on `ReceiptsTabPageGrid` selects the
+   receipt unless it is already active.
+2. `UpdateLastSelectedControl("ImagePreview_Receipts")` plus `RequestPopup` on
+   `MatchExpensesButton` opens `ExpenseReceiptCardAddDialog_form`. The browser
+   numbers popups through `NamedParameters.Arg1`; the CLI uses the message
+   sequence. The popup lists the lines that can take the receipt
+   (`TransDate_field`, `AmountCurr_field`, `MerchantId_field`).
+3. `ChangeSelectedIndex` with mark mode 0 on the popup's `MainGrid` selects the
+   line. The browser uses mode 5 when the click lands on the attach image.
+4. `Click` on `AttachButton` attaches the receipt. The response adds a
+   `DocuRef_MatchedToExpense_ds` record and reloads the popup's lines without
+   the attached one.
+5. `RequestClose` with `[null]` closes the popup, and `SaveAndClose` saves.
+
 ## Delete a Draft
 
 Captured on October 13, 2026 from the workspace Reports grid, up to and
